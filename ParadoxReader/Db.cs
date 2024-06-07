@@ -235,9 +235,16 @@ namespace ParadoxReader
 
         public string GetString(byte[] data, int from, int maxLength)
         {
+            int dataLength = data.Length;
             int stringLength = Array.FindIndex(data, from, b => b == 0) - from;
             if (stringLength > maxLength)
                 stringLength = maxLength;
+            if (stringLength < 0)
+                stringLength = 0;
+            if (from < 0)
+                from = 0;
+            if ((from + stringLength) > dataLength)
+                stringLength = dataLength;
             return Encoding.Default.GetString(data, from, stringLength);
         }
 
