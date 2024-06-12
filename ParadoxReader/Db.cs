@@ -679,25 +679,33 @@ namespace ParadoxReader
                                 case ParadoxFieldTypes.FmtMemoBLOb:
                                     var blobInfo = r.ReadBytes(dataSize);
                                     val = this.block.file.ReadBlob(blobInfo, dataSize, blobHsize);
+                                    var isMemo = (fInfo.fType == ParadoxFieldTypes.MemoBLOb || fInfo.fType == ParadoxFieldTypes.FmtMemoBLOb);
                                     if (val != null && val is byte[])
                                     {
-                                        if (fInfo.fType == ParadoxFieldTypes.MemoBLOb || fInfo.fType == ParadoxFieldTypes.FmtMemoBLOb)
+                                        if (isMemo)
                                         {
                                             val = Encoding.Default.GetString((byte[])val);
                                         }
                                         else
                                         {
-                                            val = Convert.ToBase64String((byte[])val);
+                                            //val = Convert.ToBase64String((byte[])val);
                                         }
                                     }
                                     else
                                     {
-                                        val = (string)null;
+                                        if (isMemo)
+                                        {
+                                            val = (string)null;
+                                        }
+                                        else
+                                        {
+                                            val = (byte[])null;
+                                        }
                                     }
                                     break;
                                 case ParadoxFieldTypes.Bytes:
-                                    val = r.ReadBytesIntoBase64String(dataSize); // Do we want bytes as bytes or base 64 string?
-                                    //val = r.ReadBytes(dataSize); // Do we want bytes as bytes or base 64 string?
+                                    //val = r.ReadBytesIntoBase64String(dataSize); // Do we want bytes as bytes or base64 string?
+                                    val = r.ReadBytes(dataSize); // Do we want bytes as bytes or base64 string?
                                     break;
                                 default:
                                     val = null; // not supported
@@ -765,32 +773,21 @@ namespace ParadoxReader
 
             var leader = len - 10;
 
-            //byte[] entireFileBytes = null;
-            //using(var blobFile = new FileStream(((FileStream)this.stream).Name, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
-            //{
-            //    int len = (int)blobFile.Length;
-            //    entireFileBytes = new byte[len];
-            //    blobFile.Read(entireFileBytes, 0, len);
-            //}
-
-            var size = BitConverter.ToUInt32(blobInfo, leader+4);
+            var size = BitConverter.ToUInt32(blobInfo, leader + 4);
             var blobsize = size;
 
-            if (hsize == 17)
+            if (hsize == 17) // Graphics has a larger header size (8 bytes) at the expense of the blobsize.
             {
                 blobsize = size - 8;
             }
 
-
             var index = BitConverter.ToUInt32(blobInfo, leader) & 0x000000ff;
-            var mod_nr = BitConverter.ToUInt16(blobInfo, leader+8);
-
+            var mod_nr = BitConverter.ToUInt16(blobInfo, leader + 8);
             var offset = BitConverter.ToUInt32(blobInfo, leader) & 0xffffff00;
 
 
             if (size > 0)
             {
-                //Console.WriteLine("Graphic index={0}; blobsize={1}; mod_nr={2}", index, blobsize, mod_nr);
 
                 this.stream.Position = offset;
 
@@ -798,36 +795,37 @@ namespace ParadoxReader
                 head = new byte[20];
                 this.reader.Read(head, 0, 3);
 
-                //TODO check for type 2 and index=255
-                if (head[0] == 2)
+                if (head[0] == 3)
                 {
-                    this.reader.Read(head, 0, hsize - 3); // Read remaining 6 bytes of header
-                    int checkSize = BitConverter.ToInt32(head, 0);
+                    this.reader.Read(head, 0, 9); // Read remaining 9 bytes of header
+                    var blobPointerPos = offset + 12 + (index * 5);
+                    this.stream.Position = blobPointerPos; // Goto the blob pointer with the passed index
+                    this.reader.Read(head, 0, 5); // Read the blob pointer
+                    var checkSize = ((uint)head[1] - 1) * 16 + head[4];
                     if (checkSize == size)
                     {
                         byte[] buffer;
                         buffer = new byte[size];
 
-                        this.reader.Read(buffer, 0, (int)size);
+                        var blobDataPos = offset + (head[0] * 16);
+                        this.stream.Position = blobDataPos; // Goto the blob data position
+
+                        this.reader.Read(buffer, 0, (int)size); // Or should this be blobsize? Need to test with graphic type
                         return buffer;
                     }
                 }
-                else if (head[0] == 3)
+                else //if (head[0] == 2)
                 {
-                    this.reader.Read(head, 0, 9); // Read remaining 9 bytes of header     //46, 7, 23, 27, 0, 18, 2, 23, 0
-                    var blobPointerPos = offset + 12 + (index * 5);                                     // = 4403
-                    this.stream.Position = blobPointerPos; // Goto the blob pointer with the passed index
-                    this.reader.Read(head, 0, 5); // Read the blob pointer    // 25, 1, 5, 0, 1
-                    int checkSize = ((int)head[1] - 1) * 16 + head[4];    // = 1
+                    //TODO check for type 2 and index=255
+
+                    this.reader.Read(head, 0, hsize - 3); // Read remaining 6 bytes of header
+                    var checkSize = BitConverter.ToUInt32(head, 0);
                     if (checkSize == size)
                     {
                         byte[] buffer;
                         buffer = new byte[size];
 
-                        var blobDataPos = offset + (head[0] * 16);  // = 4496
-                        this.stream.Position = blobDataPos; // Goto the blob data position
-
-                        this.reader.Read(buffer, 0, (int)size);  // buffer[0] = 49 ('1')
+                        this.reader.Read(buffer, 0, (int)size); // Or should this be blobsize? Need to test with graphic type
                         return buffer;
                     }
                 }

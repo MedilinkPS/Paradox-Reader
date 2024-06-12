@@ -48,7 +48,7 @@ namespace ParadoxReader
                 case ParadoxFieldTypes.Short:
                     return typeof(short);
                 case ParadoxFieldTypes.Long:
-                    return typeof(uint);
+                    return typeof(int);
                 case ParadoxFieldTypes.Currency:
                 case ParadoxFieldTypes.Number:
                 case ParadoxFieldTypes.BCD:
@@ -64,9 +64,9 @@ namespace ParadoxReader
                 case ParadoxFieldTypes.BLOb:
                 case ParadoxFieldTypes.OLE:
                 case ParadoxFieldTypes.Graphic:
-                case ParadoxFieldTypes.Bytes: // Do we want bytes as bytes or base 64 string?
-                    //return typeof(byte[]);
-                    return typeof(string);
+                case ParadoxFieldTypes.Bytes:
+                    return typeof(byte[]); // Do we want bytes/blobs as bytes or base64 string?
+                    //return typeof(string); // Do we want bytes/blobs as bytes or base64 string?
                 default:
                     throw new NotSupportedException();
             }

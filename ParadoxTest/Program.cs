@@ -28,7 +28,14 @@ namespace ParadoxTest
                     Console.WriteLine("Record #{0}", recIndex++);
                     for (int i = 0; i < table.FieldCount; i++)
                     {
-                        Console.WriteLine("    {0} = {1}", table.FieldNames[i], rec.DataValues[i]);
+                        var fieldName = table.FieldNames[i] ?? string.Empty;
+                        var dataValue = rec.DataValues[i];
+                        var dataValueToStr = dataValue?.ToString() ?? string.Empty;
+                        if(dataValue != null && dataValue is byte[])
+                        {
+                            dataValueToStr = Convert.ToBase64String((byte[])dataValue);
+                        }
+                        Console.WriteLine("    {0} = {1}", fieldName, dataValueToStr);
                     }
                     if (recIndex > 10) break;
                 }
