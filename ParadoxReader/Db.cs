@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Text;
@@ -114,7 +115,7 @@ namespace ParadoxReader
             this.stream.Dispose();
         }
 
-        internal virtual byte[] ReadBlob(byte[] blobInfo)
+        internal virtual byte[] ReadBlob(byte[] blobInfo, int len, int hsize)
         {
             return null;
         }
@@ -379,11 +380,13 @@ namespace ParadoxReader
             }
         }
 
-        internal override byte[] ReadBlob(byte[] blobInfo)
+        internal override byte[] ReadBlob(byte[] blobInfo, int len, int hsize)
         {
             if (this.BlobFile == null)
-                return base.ReadBlob(blobInfo);
-            return this.BlobFile.ReadBlob(blobInfo);
+            {
+                return base.ReadBlob(blobInfo, len, hsize);
+            }
+            return this.BlobFile.ReadBlob(blobInfo, len, hsize);
         }
 
         public override void Dispose()
@@ -403,6 +406,37 @@ namespace ParadoxReader
     public static class BinaryReaderExtension
     {
 
+        public static string ReadBytesIntoBase64String(this BinaryReader reader, int count, bool returnNullInsteadOfThrow = true)
+        {
+            string ret = null; // string.Empty;
+
+            try
+            {
+                var buff = reader.ReadBytes(count);
+                if ((buff?.Length ?? 0) > 0)
+                {
+                    ret = Convert.ToBase64String(buff);
+                }
+                else
+                {
+                    throw new Exception("Could not read bytes.");
+                }
+            }
+            catch
+            {
+                if(returnNullInsteadOfThrow)
+                {
+                    ret = null;
+                }
+                else //(Exception ex)
+                {
+                    throw;
+                }
+            }
+
+            return ret;
+        }
+
         /// <summary>
         /// Get the decimal value of the binary coded decimal (bytes).
         /// </summary>
@@ -413,7 +447,7 @@ namespace ParadoxReader
         /// <param name="returnMinValueInsteadOfThrow">Avoid throwing exception and instead return decimal.minvalue</param>
         /// <returns>Decimal value of the binary coded decimal</returns>
         /// <exception cref="Exception">Decimal length doesn't match, or couldn't parse the BCD string value.</exception>
-        public static decimal ReadBCD(this BinaryReader reader, int bCDDataLen, int bCDDecLen, bool checkBCDDecLen = false, bool returnMinValueInsteadOfThrow = true)
+        public static decimal ReadBCD(this BinaryReader reader, int bCDDataLen = 17, int bCDDecLen = 2, bool checkBCDDecLen = false, bool returnMinValueInsteadOfThrow = true)
         {
 
             var ret = decimal.MinValue;
@@ -438,14 +472,14 @@ namespace ParadoxReader
                 int nibblesLen = bCDDataLen * 2;
                 int nibblesIter = 0;
 
-                byte b = ZEROB;
+                byte currByte = ZEROB;
 
 
                 // Firstly start by reading the first byte, which contains the sign and decimal size.
 
-                b = reader.ReadByte();
+                currByte = reader.ReadByte();
 
-                if ((b & ONETWENTYEIGHTB) > 0) // Positive
+                if ((currByte & ONETWENTYEIGHTB) > 0) // Positive
                 {
                     sign = ZEROB;
                 }
@@ -454,8 +488,8 @@ namespace ParadoxReader
                     sign = FIFTEENB;
                     retStr += "-";
                 }
-                int size = b & SIXTYTHREEB; // The encoded size of the decimal component of this BCD
-                if (checkBCDDecLen && (size != bCDDecLen)) // Check that the encoded size matches what we expect
+                int decLen = currByte & SIXTYTHREEB; // The encoded size of the decimal component of this BCD
+                if (checkBCDDecLen && (decLen != bCDDecLen)) // Check that the encoded size matches what we expect
                 {
                     //return decimal.MinValue;
                     throw new Exception("BCD decimal length does not match expected value.");
@@ -464,16 +498,16 @@ namespace ParadoxReader
 
                 // Now we get the chars before the decimal.
 
-                for (nibblesIter = 2; nibblesIter < (nibblesLen - size); nibblesIter++)
+                for (nibblesIter = 2; nibblesIter < (nibblesLen - decLen); nibblesIter++)
                 {
                     if ((nibblesIter % 2) > 0) // Odd
                     {
-                        nibble = (byte)(b & FIFTEENB);
+                        nibble = (byte)(currByte & FIFTEENB);
                     }
                     else
                     {
-                        b = reader.ReadByte();
-                        nibble = (byte)((b >> FOURB) & FIFTEENB);
+                        currByte = reader.ReadByte();
+                        nibble = (byte)((currByte >> FOURB) & FIFTEENB);
                     }
 
                     int nibbleSigned = (nibble ^ sign);
@@ -490,6 +524,8 @@ namespace ParadoxReader
                     }
                 }
 
+                // Did we have a leading zero? (I.e. no leading other chars?)
+
                 if (leadingZero)
                 {
                     retStr += ZEROC;
@@ -502,12 +538,12 @@ namespace ParadoxReader
                 {
                     if ((nibblesIter % 2) > 0) // Odd
                     {
-                        nibble = (byte)(b & FIFTEENB);
+                        nibble = (byte)(currByte & FIFTEENB);
                     }
                     else
                     {
-                        b = reader.ReadByte();
-                        nibble = (byte)((b >> FOURB) & FIFTEENB);
+                        currByte = reader.ReadByte();
+                        nibble = (byte)((currByte >> FOURB) & FIFTEENB);
                     }
 
                     int nibbleSigned = (nibble ^ sign);
@@ -524,7 +560,7 @@ namespace ParadoxReader
                 }
 
             }
-            catch (Exception ex)
+            catch //(Exception ex)
             {
                 if(returnMinValueInsteadOfThrow)
                 {
@@ -553,6 +589,10 @@ namespace ParadoxReader
 
         private object[] data;
 
+        public const int BCDDataSize = 17;
+        public const int GraphicHsize = 17;
+        public const int OtherBlobHsize = 9;
+
         public object[] DataValues
         {
             get
@@ -567,8 +607,9 @@ namespace ParadoxReader
                         for (int colIndex = 0; colIndex < this.data.Length; colIndex++)
                         {
                             var fInfo = this.block.file.FieldTypes[colIndex];
-                            var dataSize = fInfo.fType == ParadoxFieldTypes.BCD ? 17 : fInfo.fSize;
+                            var dataSize = fInfo.fType == ParadoxFieldTypes.BCD ? BCDDataSize : fInfo.fSize;
                             var bCDDecLen = fInfo.fType == ParadoxFieldTypes.BCD ? fInfo.fSize : 0;
+                            var blobHsize = fInfo.fType == ParadoxFieldTypes.Graphic ? GraphicHsize : OtherBlobHsize;
                             var empty = true;
                             for (var i = 0; i < dataSize; i++)
                             {
@@ -589,11 +630,6 @@ namespace ParadoxReader
                             {
                                 case ParadoxFieldTypes.Alpha:
                                     val = this.block.file.GetString(this.block.data, (int)buff.Position, dataSize);
-                                    buff.Position += dataSize;
-                                    break;
-                                case ParadoxFieldTypes.MemoBLOb:
-                                case ParadoxFieldTypes.FmtMemoBLOb:
-                                    val = this.block.file.GetStringFromMemo(this.block.data, (int)buff.Position, dataSize);
                                     buff.Position += dataSize;
                                     break;
                                 case ParadoxFieldTypes.Short:
@@ -639,10 +675,29 @@ namespace ParadoxReader
                                 case ParadoxFieldTypes.BLOb:
                                 case ParadoxFieldTypes.OLE:
                                 case ParadoxFieldTypes.Graphic:
+                                case ParadoxFieldTypes.MemoBLOb:
+                                case ParadoxFieldTypes.FmtMemoBLOb:
+                                    var blobInfo = r.ReadBytes(dataSize);
+                                    val = this.block.file.ReadBlob(blobInfo, dataSize, blobHsize);
+                                    if (val != null && val is byte[])
+                                    {
+                                        if (fInfo.fType == ParadoxFieldTypes.MemoBLOb || fInfo.fType == ParadoxFieldTypes.FmtMemoBLOb)
+                                        {
+                                            val = Encoding.Default.GetString((byte[])val);
+                                        }
+                                        else
+                                        {
+                                            val = Convert.ToBase64String((byte[])val);
+                                        }
+                                    }
+                                    else
+                                    {
+                                        val = (string)null;
+                                    }
+                                    break;
                                 case ParadoxFieldTypes.Bytes:
-                                    var blobInfo = new byte[dataSize];
-                                    r.Read(blobInfo, 0, dataSize);
-                                    val = this.block.file.ReadBlob(blobInfo);
+                                    val = r.ReadBytesIntoBase64String(dataSize); // Do we want bytes as bytes or base 64 string?
+                                    //val = r.ReadBytes(dataSize); // Do we want bytes as bytes or base 64 string?
                                     break;
                                 default:
                                     val = null; // not supported
@@ -705,38 +760,76 @@ namespace ParadoxReader
             this.stream.Dispose();
         }
 
-        public byte[] ReadBlob(byte[] blobInfo)
+        public byte[] ReadBlob(byte[] blobInfo, int len, int hsize)
         {
-            uint OffsetAndIndex = BitConverter.ToUInt32(blobInfo, 0);
-            uint index = OffsetAndIndex & 0x000000ff;
-            uint Offset = OffsetAndIndex & 0xffffff00;
 
-            int size = BitConverter.ToInt32(blobInfo, 4);
-            int hsize = 9;
+            var leader = len - 10;
 
-            int mod_nr = BitConverter.ToInt16(blobInfo, 8);
+            //byte[] entireFileBytes = null;
+            //using(var blobFile = new FileStream(((FileStream)this.stream).Name, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            //{
+            //    int len = (int)blobFile.Length;
+            //    entireFileBytes = new byte[len];
+            //    blobFile.Read(entireFileBytes, 0, len);
+            //}
+
+            var size = BitConverter.ToUInt32(blobInfo, leader+4);
+            var blobsize = size;
+
+            if (hsize == 17)
+            {
+                blobsize = size - 8;
+            }
+
+
+            var index = BitConverter.ToUInt32(blobInfo, leader) & 0x000000ff;
+            var mod_nr = BitConverter.ToUInt16(blobInfo, leader+8);
+
+            var offset = BitConverter.ToUInt32(blobInfo, leader) & 0xffffff00;
+
 
             if (size > 0)
             {
                 //Console.WriteLine("Graphic index={0}; blobsize={1}; mod_nr={2}", index, blobsize, mod_nr);
 
-                this.stream.Position = Offset;
+                this.stream.Position = offset;
 
                 byte[] head;
-                head = new byte[6];
+                head = new byte[20];
                 this.reader.Read(head, 0, 3);
 
                 //TODO check for type 2 and index=255
-
-                this.reader.Read(head, 0, hsize - 3); //Read remaining 6 bytes of header
-                int checkSize = BitConverter.ToInt32(head, 0);
-                if (checkSize == size)
+                if (head[0] == 2)
                 {
-                    byte[] buffer;
-                    buffer = new byte[size];
+                    this.reader.Read(head, 0, hsize - 3); // Read remaining 6 bytes of header
+                    int checkSize = BitConverter.ToInt32(head, 0);
+                    if (checkSize == size)
+                    {
+                        byte[] buffer;
+                        buffer = new byte[size];
 
-                    this.reader.Read(buffer, 0, size);
-                    return buffer;
+                        this.reader.Read(buffer, 0, (int)size);
+                        return buffer;
+                    }
+                }
+                else if (head[0] == 3)
+                {
+                    this.reader.Read(head, 0, 9); // Read remaining 9 bytes of header     //46, 7, 23, 27, 0, 18, 2, 23, 0
+                    var blobPointerPos = offset + 12 + (index * 5);                                     // = 4403
+                    this.stream.Position = blobPointerPos; // Goto the blob pointer with the passed index
+                    this.reader.Read(head, 0, 5); // Read the blob pointer    // 25, 1, 5, 0, 1
+                    int checkSize = ((int)head[1] - 1) * 16 + head[4];    // = 1
+                    if (checkSize == size)
+                    {
+                        byte[] buffer;
+                        buffer = new byte[size];
+
+                        var blobDataPos = offset + (head[0] * 16);  // = 4496
+                        this.stream.Position = blobDataPos; // Goto the blob data position
+
+                        this.reader.Read(buffer, 0, (int)size);  // buffer[0] = 49 ('1')
+                        return buffer;
+                    }
                 }
             }
             return null;

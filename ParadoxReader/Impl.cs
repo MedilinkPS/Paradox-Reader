@@ -64,8 +64,9 @@ namespace ParadoxReader
                 case ParadoxFieldTypes.BLOb:
                 case ParadoxFieldTypes.OLE:
                 case ParadoxFieldTypes.Graphic:
-                case ParadoxFieldTypes.Bytes:
-                    return typeof(byte[]);
+                case ParadoxFieldTypes.Bytes: // Do we want bytes as bytes or base 64 string?
+                    //return typeof(byte[]);
+                    return typeof(string);
                 default:
                     throw new NotSupportedException();
             }
