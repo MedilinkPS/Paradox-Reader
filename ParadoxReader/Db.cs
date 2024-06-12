@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using System.Data;
 using System.IO;
+using System.Net;
 using System.Text;
 
 namespace ParadoxReader
@@ -399,6 +400,146 @@ namespace ParadoxReader
         }
     }
 
+    public static class BinaryReaderExtension
+    {
+
+        /// <summary>
+        /// Get the decimal value of the binary coded decimal (bytes).
+        /// </summary>
+        /// <param name="reader">Binary (byte) reader</param>
+        /// <param name="bCDDataLen">Number of bytes, 17 for BDE</param>
+        /// <param name="bCDDecLen">Number of decimal places, often 2</param>
+        /// <param name="checkBCDDecLen">Check to make sure the decimal places match what is encoded in BCD</param>
+        /// <param name="returnMinValueInsteadOfThrow">Avoid throwing exception and instead return decimal.minvalue</param>
+        /// <returns>Decimal value of the binary coded decimal</returns>
+        /// <exception cref="Exception">Decimal length doesn't match, or couldn't parse the BCD string value.</exception>
+        public static decimal ReadBCD(this BinaryReader reader, int bCDDataLen, int bCDDecLen, bool checkBCDDecLen = false, bool returnMinValueInsteadOfThrow = true)
+        {
+
+            var ret = decimal.MinValue;
+
+            try
+            {
+
+                const byte ZEROB = 0x00;
+                const byte FOURB = 0x04;
+                const byte FIFTEENB = 0x0f;
+                const byte SIXTYTHREEB = 0x3f;
+                const byte ONETWENTYEIGHTB = 0x80;
+                const char ZEROC = '0';
+                const char PERIODC = '.';
+
+                string decimalDelimiter = "" + PERIODC; // TODO: get locale decimial delimiter
+
+                var retStr = "";
+                byte sign;
+                byte nibble;
+                bool leadingZero = true;
+                int nibblesLen = bCDDataLen * 2;
+                int nibblesIter = 0;
+
+                byte b = ZEROB;
+
+
+                // Firstly start by reading the first byte, which contains the sign and decimal size.
+
+                b = reader.ReadByte();
+
+                if ((b & ONETWENTYEIGHTB) > 0) // Positive
+                {
+                    sign = ZEROB;
+                }
+                else // Negative
+                {
+                    sign = FIFTEENB;
+                    retStr += "-";
+                }
+                int size = b & SIXTYTHREEB; // The encoded size of the decimal component of this BCD
+                if (checkBCDDecLen && (size != bCDDecLen)) // Check that the encoded size matches what we expect
+                {
+                    //return decimal.MinValue;
+                    throw new Exception("BCD decimal length does not match expected value.");
+                }
+
+
+                // Now we get the chars before the decimal.
+
+                for (nibblesIter = 2; nibblesIter < (nibblesLen - size); nibblesIter++)
+                {
+                    if ((nibblesIter % 2) > 0) // Odd
+                    {
+                        nibble = (byte)(b & FIFTEENB);
+                    }
+                    else
+                    {
+                        b = reader.ReadByte();
+                        nibble = (byte)((b >> FOURB) & FIFTEENB);
+                    }
+
+                    int nibbleSigned = (nibble ^ sign);
+
+                    if (leadingZero && (nibbleSigned > 0)) // We've found a nibble value more than zero, so turn off the leading zero flag.
+                    {
+                        leadingZero = false;
+                    }
+                    if (!leadingZero)
+                    {
+                        char nibbleChar = (char)(nibbleSigned + ZEROC);
+
+                        retStr += nibbleChar;
+                    }
+                }
+
+                if (leadingZero)
+                {
+                    retStr += ZEROC;
+                }
+                retStr += decimalDelimiter;
+
+                // Now we get the chars after the decimal.
+
+                for (; nibblesIter < nibblesLen; nibblesIter++)
+                {
+                    if ((nibblesIter % 2) > 0) // Odd
+                    {
+                        nibble = (byte)(b & FIFTEENB);
+                    }
+                    else
+                    {
+                        b = reader.ReadByte();
+                        nibble = (byte)((b >> FOURB) & FIFTEENB);
+                    }
+
+                    int nibbleSigned = (nibble ^ sign);
+                    char nibbleChar = (char)(nibbleSigned + ZEROC);
+
+                    retStr += nibbleChar;
+                }
+
+                var parsed = decimal.TryParse(retStr, out ret);
+
+                if (!parsed)
+                {
+                    throw new Exception("Could not parse BCD: '" + retStr + "'");
+                }
+
+            }
+            catch (Exception ex)
+            {
+                if(returnMinValueInsteadOfThrow)
+                {
+                    ret = decimal.MinValue;
+                }
+                else
+                {
+                    throw;
+                }
+            }
+
+            return ret;
+        }
+    }
+
     public class ParadoxRecord
     {
         internal readonly ParadoxFile.DataBlock block;
@@ -427,10 +568,11 @@ namespace ParadoxReader
                         {
                             var fInfo = this.block.file.FieldTypes[colIndex];
                             var dataSize = fInfo.fType == ParadoxFieldTypes.BCD ? 17 : fInfo.fSize;
+                            var bCDDecLen = fInfo.fType == ParadoxFieldTypes.BCD ? fInfo.fSize : 0;
                             var empty = true;
-                            for (var i=0; i<dataSize; i++)
+                            for (var i = 0; i < dataSize; i++)
                             {
-                                if (this.block.data[buff.Position+i] != 0)
+                                if (this.block.data[buff.Position + i] != 0)
                                 {
                                     empty = false;
                                     break;
@@ -450,6 +592,7 @@ namespace ParadoxReader
                                     buff.Position += dataSize;
                                     break;
                                 case ParadoxFieldTypes.MemoBLOb:
+                                case ParadoxFieldTypes.FmtMemoBLOb:
                                     val = this.block.file.GetStringFromMemo(this.block.data, (int)buff.Position, dataSize);
                                     buff.Position += dataSize;
                                     break;
@@ -463,27 +606,30 @@ namespace ParadoxReader
                                     val = r.ReadInt32();
                                     break;
                                 case ParadoxFieldTypes.Currency:
-                                    ConvertBytes((int)buff.Position, dataSize);
-                                    val = r.ReadDouble();
-                                    break;
                                 case ParadoxFieldTypes.Number:
                                     ConvertBytesNum((int)buff.Position, dataSize);
                                     var dbl = r.ReadDouble();
                                     val = (double.IsNaN(dbl)) ? (object)DBNull.Value : dbl;
                                     break;
+                                case ParadoxFieldTypes.BCD:
+                                    var decBCD = r.ReadBCD(dataSize, bCDDecLen);
+                                    var dblBCD = decBCD > decimal.MinValue ? (double)decBCD : double.NaN;
+                                    val = (double.IsNaN(dblBCD)) ? (object)DBNull.Value : dblBCD;
+                                    break;
                                 case ParadoxFieldTypes.Date:
                                     ConvertBytes((int)buff.Position, dataSize);
                                     var days = r.ReadInt32();
-                                    val = new DateTime(1, 1, 1).AddDays(days-1);
+                                    val = new DateTime(1, 1, 1).AddDays(days > 0 ? days - 1 : 0);
                                     break;
                                 case ParadoxFieldTypes.Timestamp:
                                     ConvertBytes((int)buff.Position, dataSize);
-                                    var ms = r.ReadDouble();
-                                    val = new DateTime(1, 1, 1).AddMilliseconds(ms).AddDays(-1);
+                                    var msDbl = r.ReadDouble();
+                                    val = new DateTime(1, 1, 1).AddMilliseconds(msDbl >= 0 ? msDbl : 0).AddDays(msDbl >= 86400000 ? -1 : 0);
                                     break;
                                 case ParadoxFieldTypes.Time:
                                     ConvertBytes((int)buff.Position, dataSize);
-                                    val = TimeSpan.FromMilliseconds(r.ReadInt32());
+                                    var msInt = r.ReadInt32();
+                                    val = TimeSpan.FromMilliseconds(msInt >= 0 ? msInt : 0);
                                     break;
                                 case ParadoxFieldTypes.Logical:
                                     // False is stored as 128, and True looks like 129.
@@ -491,6 +637,9 @@ namespace ParadoxReader
                                     buff.Position += dataSize;
                                     break;
                                 case ParadoxFieldTypes.BLOb:
+                                case ParadoxFieldTypes.OLE:
+                                case ParadoxFieldTypes.Graphic:
+                                case ParadoxFieldTypes.Bytes:
                                     var blobInfo = new byte[dataSize];
                                     r.Read(blobInfo, 0, dataSize);
                                     val = this.block.file.ReadBlob(blobInfo);
@@ -592,6 +741,7 @@ namespace ParadoxReader
             }
             return null;
         }
+
     }
 
 }

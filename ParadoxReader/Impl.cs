@@ -43,19 +43,29 @@ namespace ParadoxReader
             {
                 case ParadoxFieldTypes.Alpha:
                 case ParadoxFieldTypes.MemoBLOb:
-                    return typeof (string);
+                case ParadoxFieldTypes.FmtMemoBLOb:
+                    return typeof(string);
                 case ParadoxFieldTypes.Short:
                     return typeof(short);
                 case ParadoxFieldTypes.Long:
                     return typeof(uint);
                 case ParadoxFieldTypes.Currency:
-                    return typeof(double);
                 case ParadoxFieldTypes.Number:
+                case ParadoxFieldTypes.BCD:
                     return typeof(double);
                 case ParadoxFieldTypes.Date:
                     return typeof(DateTime);
                 case ParadoxFieldTypes.Timestamp:
                     return typeof(DateTime);
+                case ParadoxFieldTypes.Time:
+                    return typeof(TimeSpan);
+                case ParadoxFieldTypes.Logical:
+                    return typeof(bool);
+                case ParadoxFieldTypes.BLOb:
+                case ParadoxFieldTypes.OLE:
+                case ParadoxFieldTypes.Graphic:
+                case ParadoxFieldTypes.Bytes:
+                    return typeof(byte[]);
                 default:
                     throw new NotSupportedException();
             }

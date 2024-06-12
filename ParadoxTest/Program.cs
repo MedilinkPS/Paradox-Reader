@@ -20,7 +20,7 @@ namespace ParadoxTest
 
             Console.WriteLine("Test 1: sequential read first 10 records from start");
             Console.WriteLine("==========================================================");
-            using (var table = new ParadoxTable(dbPath, "zakazky"))
+            using (var table = new ParadoxTable(dbPath, "testtab"))
             {
                 var recIndex = 1;
                 foreach (var rec in table.Enumerate())
@@ -32,11 +32,11 @@ namespace ParadoxTest
                     }
                     if (recIndex > 10) break;
                 }
-                Console.WriteLine("-- press [enter] to continue --");
+                Console.WriteLine("-- press any key to continue --");
                 Console.ReadKey();
-                Console.Clear();
+                //Console.Clear();
 
-                Console.WriteLine("Test 2: read 10 records by index (key range: 1750 -> 1760)");
+                Console.WriteLine("Test 2: read 10 records by index (key range: 3 -> 4)");
                 Console.WriteLine("==========================================================");
 
                 using (var index = table.PrimaryKeyIndex)
@@ -45,8 +45,8 @@ namespace ParadoxTest
                     {
                         var condition =
                             new ParadoxCondition.LogicalAnd(
-                                new ParadoxCondition.Compare(ParadoxCompareOperator.GreaterOrEqual, 2, 0, 0),
-                                new ParadoxCondition.Compare(ParadoxCompareOperator.LessOrEqual, 2, 0, 0));
+                                new ParadoxCondition.Compare(ParadoxCompareOperator.GreaterOrEqual, 3, 0, 0),
+                                new ParadoxCondition.Compare(ParadoxCompareOperator.LessOrEqual, 4, 0, 0));
                         var qry = index.Enumerate(condition);
                         var rdr = new ParadoxDataReader(table, qry);
                         recIndex = 1;
@@ -61,7 +61,7 @@ namespace ParadoxTest
                     }
                 }
             }
-            Console.WriteLine("-- press [enter] to continue --");
+            Console.WriteLine("-- press any key to continue --");
             Console.ReadKey();
 
         }
