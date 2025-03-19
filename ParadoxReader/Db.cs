@@ -4,6 +4,7 @@ using System.Data;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
+using System.Runtime.CompilerServices;
 using System.Text;
 
 namespace ParadoxReader
@@ -355,25 +356,42 @@ namespace ParadoxReader
 
     }
 
+    public static class ExtensionMethods
+    {
+        public static string EnsureEndsWith(this string tableName, string suffix)
+        {
+            return (tableName?.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) ?? false) ? tableName : (tableName + suffix);
+        }
+    }
+
+
     public class ParadoxTable : ParadoxFile
     {
         public readonly ParadoxPrimaryKey PrimaryKeyIndex;
         private readonly ParadoxBlobFile BlobFile;
 
-        public ParadoxTable(string dbPath, string tableName) : base(Path.Combine(dbPath, tableName + ".db"))
+        const string DOT_DB = ".DB"; // Data file
+        const string DOT_PX = ".PX"; // Primary Key file
+        const string DOT_MB = ".MB"; // Blob file
+        const string DOT_WILD = ".*";
+
+        public ParadoxTable(string dbPath, string tableName)
+            : base(Path.Combine(dbPath, tableName?.EnsureEndsWith(DOT_DB)))
         {
-            var files = Directory.GetFiles(dbPath, tableName + "*.*");
+            var tableNameWithExt = tableName?.EnsureEndsWith(DOT_DB);
+            var tableNameWithoutExt = Path.GetFileNameWithoutExtension(tableNameWithExt);
+            var files = Directory.GetFiles(dbPath, tableNameWithoutExt + DOT_WILD);
             foreach (var file in files)
             {
-                if (Path.GetFileName(file) == tableName + ".db") continue; // current file
-                if (Path.GetFileNameWithoutExtension(file).EndsWith(".PX", StringComparison.InvariantCultureIgnoreCase) ||
-                    Path.GetExtension(file).Equals(".PX", StringComparison.InvariantCultureIgnoreCase))
+                if (Path.GetFileName(file) == tableNameWithExt) continue; // current file
+                if (Path.GetFileNameWithoutExtension(file).EndsWith(DOT_PX, StringComparison.OrdinalIgnoreCase) ||
+                    Path.GetExtension(file).Equals(DOT_PX, StringComparison.OrdinalIgnoreCase))
                 {
                     this.PrimaryKeyIndex = new ParadoxPrimaryKey(this, file);
-                    break;
+                    //break; // I'm not sure we can guarantee that PX will be found after MB.
                 }
-                if (Path.GetFileNameWithoutExtension(file).EndsWith(".MB", StringComparison.InvariantCultureIgnoreCase) ||
-                    Path.GetExtension(file).Equals(".MB", StringComparison.InvariantCultureIgnoreCase))
+                if (Path.GetFileNameWithoutExtension(file).EndsWith(DOT_MB, StringComparison.OrdinalIgnoreCase) ||
+                    Path.GetExtension(file).Equals(DOT_MB, StringComparison.OrdinalIgnoreCase))
                 {
                     this.BlobFile = new ParadoxBlobFile(file);
                 }
