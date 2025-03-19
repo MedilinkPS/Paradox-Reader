@@ -18,9 +18,30 @@ namespace ParadoxTest
 
             var dbPath = ParadoxTest.Configuration.GetParadoxDataFolderPath("Test");
 
+            if (!Directory.Exists(dbPath))
+            {
+                throw new DirectoryNotFoundException($"Could not find {dbPath}");
+            }
+
+            var randomTablePath = string.Empty;
+
+            var dbTableFilePaths = Directory.GetFiles(dbPath, "*.DB");
+            var dbTableFilePathsCount = dbTableFilePaths?.Length ?? 0;
+
+            if (dbTableFilePathsCount > 0)
+            {
+                Random r = new Random();
+                randomTablePath = dbTableFilePaths[r.Next(0, dbTableFilePathsCount)];
+            }
+
+            if (string.IsNullOrWhiteSpace(randomTablePath) || !File.Exists(randomTablePath))
+            {
+                throw new FileNotFoundException($"Could not find .DB file in {dbPath}");
+            }
+
             Console.WriteLine("Test 1: sequential read first 10 records from start");
             Console.WriteLine("==========================================================");
-            using (var table = new ParadoxTable(dbPath, "testtab"))
+            using (var table = new ParadoxTable(dbPath, Path.GetFileName(randomTablePath)))
             {
                 var recIndex = 1;
                 foreach (var rec in table.Enumerate())
@@ -55,14 +76,16 @@ namespace ParadoxTest
                                 new ParadoxCondition.Compare(ParadoxCompareOperator.GreaterOrEqual, 3, 0, 0),
                                 new ParadoxCondition.Compare(ParadoxCompareOperator.LessOrEqual, 4, 0, 0));
                         var qry = index.Enumerate(condition);
-                        var rdr = new ParadoxDataReader(table, qry);
-                        recIndex = 1;
-                        while (rdr.Read())
+                        using (var rdr = new ParadoxDataReader(table, qry))
                         {
-                            Console.WriteLine("Record #{0}", recIndex++);
-                            for (int i = 0; i < rdr.FieldCount; i++)
+                            recIndex = 1;
+                            while (rdr.Read())
                             {
-                                Console.WriteLine("    {0} = {1}", rdr.GetName(i), rdr[i]);
+                                Console.WriteLine("Record #{0}", recIndex++);
+                                for (int i = 0; i < rdr.FieldCount; i++)
+                                {
+                                    Console.WriteLine("    {0} = {1}", rdr.GetName(i), rdr[i]);
+                                }
                             }
                         }
                     }
