@@ -82,7 +82,7 @@ namespace ParadoxTest
 
                     tmpDataValues[0] = 9; // 9;
                     tmpDataValues[1] = "ZZZ"; // ZZZ
-                    tmpDataValues[2] = 999.99d;
+                    tmpDataValues[2] = -999.99d;
                     tmpDataValues[3] = 999.99d;
                     tmpDataValues[4] = (short)999;
                     tmpDataValues[5] = 999;

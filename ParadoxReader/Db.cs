@@ -845,7 +845,7 @@ namespace ParadoxReader
                                     break;
                                 case ParadoxFieldTypes.Currency:
                                 case ParadoxFieldTypes.Number:
-                                    ConvertBytesNum((int)buff.Position, dataSize);
+                                    ConvertBytesNum(preReadPos, dataSize, inverse: false);
                                     var dbl = reader.ReadDouble();
                                     val = (double.IsNaN(dbl)) ? (object)DBNull.Value : dbl;
                                     break;
@@ -969,9 +969,23 @@ namespace ParadoxReader
                                 case ParadoxFieldTypes.Currency:
                                 case ParadoxFieldTypes.Number:
                                     var numberDblVal = (double)val;
-                                    var numberBytesArrayVal = ConvertDoubleToBytes(dataSize, numberDblVal);
-                                    writer.Write(numberBytesArrayVal);
+                                    if(double.IsNaN(numberDblVal)) { numberDblVal = default(double); } // Set to zero?
+                                    writer.Write(numberDblVal);
+                                    ConvertBytesNum(preWritePos, dataSize, inverse: true);
                                     break;
+
+
+
+
+                                    //ConvertBytesNum(preReadPos, dataSize, inverse: false);
+                                    //var dbl = reader.ReadDouble();
+                                    //val = (double.IsNaN(dbl)) ? (object)DBNull.Value : dbl;
+                                    //break;
+
+
+
+
+
                                 case ParadoxFieldTypes.BCD:
                                     var bCDVal = (decimal)(double)val;
                                     writer.WriteBCD(bCDVal, bCDDecLen);
@@ -1080,53 +1094,57 @@ namespace ParadoxReader
         }
 
 
-        private void ConvertBytesNum(int start, int length)
+        private void ConvertBytesNum(int start, int length, bool inverse)
         {
-            ParadoxRecord.ConvertBytesNum(this.block.data, start, length, inverse: false);
+            ParadoxRecord.ConvertBytesNum(this.block.data, start, length, inverse);
             // The data is now converted such that we can ReadDouble to obtain a double value.
         }
 
-        private static byte[] ConvertDoubleToBytes(int length, double numberDblVal)
+        public static void ConvertBytesNum(byte[] data, int offset, int length, bool inverse)
         {
-            // Implement inverse of convertbytesnum
-            var bytes = BitConverter.GetBytes(numberDblVal);
-            ParadoxRecord.ConvertBytesNum(bytes, 0, length, inverse: true);
-            return bytes;
-        }
 
-        public static void ConvertBytesNum(byte[] data, int offset, int length, bool inverse) /* amk */
-        {
+            if (length != 8)
+            {
+                throw new Exception("Expected length of 8 for ConvertBytesNum, but got " + length.ToString());
+            }
+
             if (inverse)
             {
                 Array.Reverse(data, offset, length);
             }
-            if ((data[offset] & 0x80) != 0)
+
+            if ((data[offset] & 0x80) != (inverse ? 0x80 : 0))
             {
-                data[offset] = (byte)(data[offset] & 0x7F);
+                data[offset] ^= 0x80; // Flip high bit
             }
             else if (data[offset + 0] == 0 &&
-                     data[offset + 1] == 0 &&
-                     data[offset + 2] == 0 &&
-                     data[offset + 3] == 0 &&
-                     data[offset + 4] == 0 &&
-                     data[offset + 5] == 0 &&
-                     data[offset + 6] == 0 &&
-                     data[offset + 7] == 0)
+                data[offset + 1] == 0 &&
+                data[offset + 2] == 0 &&
+                data[offset + 3] == 0 &&
+                data[offset + 4] == 0 &&
+                data[offset + 5] == 0 &&
+                data[offset + 6] == 0 &&
+                data[offset + 7] == 0)
             {
                 // Do nothing
             }
             else
             {
-                for (int i = 0; i < 8; i++)
+                // Invert all bits
+                for (int i = 0; i < length; i++)
                 {
                     data[offset + i] = (byte)(~data[offset + i]);
                 }
             }
+
             if (!inverse)
             {
                 Array.Reverse(data, offset, length);
             }
+
         }
+
+
     }
 
     internal class ParadoxBlobFile : IDisposable
