@@ -525,10 +525,10 @@ namespace ParadoxReader
         /// <param name="bCDDecLen">Number of decimal places, often 2</param>
         /// <param name="bCDDataLen">Number of bytes, 17 for BDE</param>
         /// <param name="checkBCDDecLen">Check to make sure the decimal places match what is encoded in BCD</param>
-        /// <param name="returnMinValueInsteadOfThrow">Avoid throwing exception and instead return decimal.minvalue</param>
+        /// <param name="avoidThrow">Avoid throwing exception and instead return decimal.minvalue</param>
         /// <returns>Decimal value of the binary coded decimal</returns>
         /// <exception cref="Exception">Decimal length doesn't match, or couldn't parse the BCD string value.</exception>
-        public static decimal ReadBCD(this BinaryReader reader, int bCDDecLen = 2, int bCDDataLen = 17, bool checkBCDDecLen = false, bool returnMinValueInsteadOfThrow = true)
+        public static decimal ReadBCD(this BinaryReader reader, int bCDDecLen = 2, int bCDDataLen = 17, bool checkBCDDecLen = false, bool avoidThrow = true)
         {
 
             var ret = decimal.MinValue;
@@ -538,11 +538,10 @@ namespace ParadoxReader
             try
             {
 
-                const byte ZEROB = 0x00;
-                const byte FOURB = 0x04;
-                const byte FIFTEENB = 0x0f;
-                const byte SIXTYTHREEB = 0x3f;
-                const byte ONETWENTYEIGHTB = 0x80;
+                const byte ZERO =           0b00000000; // 0x00;
+                const byte FIFTEEN =        0b00001111; // 0x0f;
+                const byte SIXTYTHREE =     0b00111111; // 0x3f;
+                const byte ONETWENTYEIGHT = 0b10000000; // 0x80;
                 const char ZEROC = '0';
                 const char PERIODC = '.';
 
@@ -555,23 +554,23 @@ namespace ParadoxReader
                 int nibblesLen = bCDDataLen * 2;
                 int nibblesIter = 0;
 
-                byte currByte = ZEROB;
+                byte currByte = ZERO;
 
 
                 // Firstly start by reading the first byte, which contains the sign and decimal size.
 
                 currByte = reader.ReadByte();
 
-                if ((currByte & ONETWENTYEIGHTB) > 0) // Positive
+                if ((currByte & ONETWENTYEIGHT) > 0) // Positive
                 {
-                    sign = ZEROB;
+                    sign = ZERO;
                 }
                 else // Negative
                 {
-                    sign = FIFTEENB;
+                    sign = FIFTEEN;
                     retStr += "-";
                 }
-                int decLen = currByte & SIXTYTHREEB; // The encoded size of the decimal component of this BCD
+                int decLen = currByte & SIXTYTHREE; // The encoded size of the decimal component of this BCD
                 if (checkBCDDecLen && (decLen != bCDDecLen)) // Check that the encoded size matches what we expect
                 {
                     //return decimal.MinValue;
@@ -585,12 +584,12 @@ namespace ParadoxReader
                 {
                     if ((nibblesIter % 2) > 0) // Odd
                     {
-                        nibble = (byte)(currByte & FIFTEENB);
+                        nibble = (byte)(currByte & FIFTEEN);
                     }
                     else
                     {
                         currByte = reader.ReadByte();
-                        nibble = (byte)((currByte >> FOURB) & FIFTEENB);
+                        nibble = (byte)((currByte >> 4) & FIFTEEN);
                     }
 
                     int nibbleSigned = (nibble ^ sign);
@@ -621,12 +620,12 @@ namespace ParadoxReader
                 {
                     if ((nibblesIter % 2) > 0) // Odd
                     {
-                        nibble = (byte)(currByte & FIFTEENB);
+                        nibble = (byte)(currByte & FIFTEEN);
                     }
                     else
                     {
                         currByte = reader.ReadByte();
-                        nibble = (byte)((currByte >> FOURB) & FIFTEENB);
+                        nibble = (byte)((currByte >> 4) & FIFTEEN);
                     }
 
                     int nibbleSigned = (nibble ^ sign);
@@ -645,7 +644,7 @@ namespace ParadoxReader
             }
             catch //(Exception ex)
             {
-                if(returnMinValueInsteadOfThrow)
+                if(avoidThrow)
                 {
                     ret = decimal.MinValue;
                 }
@@ -674,104 +673,100 @@ namespace ParadoxReader
             return ret;
         }
 
-        public static void WriteBCD(this BinaryWriter writer, decimal value, int bCDDecLen = 2, int bCDDataLen = 17, bool checkBCDDecLen = false)
+
+
+
+
+        public static void WriteBCD(this BinaryWriter writer, decimal value, int bCDDecLen = 2, int bCDDataLen = 17)
         {
-            var writreInitPos = writer.BaseStream.Position;
+            var outputBuf = new byte[bCDDataLen];
+            byte sign;
+            string strValue = value.ToString($"F{bCDDecLen}", System.Globalization.CultureInfo.InvariantCulture);
+            char[] valueChars = strValue.ToCharArray();
+            int i, j;
 
-            try
+
+            const byte ZERO =           0b00000000; // 0x00;
+            const byte FIFTEEN =        0b00001111; // 0x0f;
+            const byte SIXTYFOUR =      0b01000000; // 0x40;
+            const byte ONENINETYTWO =   0b11000000; // 0xc0;
+            const byte TWOFORTY =       0b11110000; // 0xf0;
+            const byte TWOFIFTYFIVE =   0b11111111; // 0xff;
+
+            const char PERIODC = '.';
+            const char MINUSC = '-';
+            const char ZEROC = '0';
+            const char NINEC = '9';
+
+            var bCDNibbleLen = bCDDataLen * 2;
+
+            Array.Clear(outputBuf, 0, bCDDataLen);
+
+            if (valueChars.Length > 0)
             {
-                const byte ZEROB = 0x00;
-                const byte FOURB = 0x04;
-                const byte FIFTEENB = 0x0f;
-                const byte SIXTYTHREEB = 0x3f;
-                const byte ONETWENTYEIGHTB = 0x80;
-                const char ZEROC = '0';
-
-                // Validate bCDDecLen
-                if (checkBCDDecLen && bCDDecLen > 63) // Max decimal length fits in 6 bits
-                    throw new Exception("BCD decimal length exceeds maximum allowed value (63).");
-
-                // Convert decimal to string, removing decimal point
-                string valueStr = value.ToString(System.Globalization.CultureInfo.InvariantCulture);
-                bool isNegative = valueStr.StartsWith("-");
-                valueStr = valueStr.Replace("-", ""); // Remove sign
-                string[] parts = valueStr.Split('.');
-                string integerPart = parts[0];
-                string decimalPart = parts.Length > 1 ? parts[1] : "";
-
-                // Pad decimal part with zeros if needed
-                decimalPart = decimalPart.PadRight(bCDDecLen, ZEROC);
-                if (decimalPart.Length > bCDDecLen)
-                    throw new Exception("Decimal part exceeds specified bCDDecLen.");
-
-                // Calculate required nibbles
-                int totalNibbles = bCDDataLen * 2;
-                int decimalNibbles = bCDDecLen;
-                int integerNibbles = totalNibbles - decimalNibbles - 2; // -2 for sign/decimal byte
-                if (integerNibbles < 0)
-                    throw new Exception("bCDDataLen is too small for specified bCDDecLen.");
-
-                // Check if integer part fits
-                if (integerPart.Length > integerNibbles)
-                    throw new Exception("Integer part exceeds available nibbles.");
-
-                // Pad integer part with leading zeros
-                integerPart = integerPart.PadLeft(integerNibbles, ZEROC);
-                string allDigits = integerPart + decimalPart;
-
-                // First byte: sign and decimal length
-                byte sign = isNegative ? ZEROB : ONETWENTYEIGHTB;
-                byte firstByte = (byte)(sign | (bCDDecLen & SIXTYTHREEB));
-                writer.Write(firstByte);
-
-                // Encode digits as nibbles
-                byte signXor = isNegative ? FIFTEENB : ZEROB;
-                byte currByte = 0;
-                for (int i = 0; i < allDigits.Length; i++)
+                j = 0;
+                if (valueChars[0] == MINUSC)
                 {
-                    int nibble = allDigits[i] - ZEROC;
-                    if (nibble < 0 || nibble > 9)
-                        throw new Exception("Invalid digit in decimal value.");
-
-                    nibble ^= signXor; // Apply sign XOR
-                    if (i % 2 == 0)
-                    {
-                        // High nibble
-                        currByte = (byte)(nibble << FOURB);
-                    }
-                    else
-                    {
-                        // Low nibble and write byte
-                        currByte |= (byte)(nibble & FIFTEENB);
-                        writer.Write(currByte);
-                        currByte = 0;
-                    }
+                    outputBuf[0] = (byte)(SIXTYFOUR + bCDDecLen);
+                    sign = FIFTEEN;
+                    for (int k = 1; k < bCDDataLen; k++)
+                        outputBuf[k] = TWOFIFTYFIVE;
+                }
+                else
+                {
+                    outputBuf[0] = (byte)(ONENINETYTWO + bCDDecLen);
+                    sign = ZERO;
                 }
 
-                // If odd number of nibbles, write the last byte
-                if (allDigits.Length % 2 == 1)
-                    writer.Write(currByte);
-            }
-            catch
-            {
-                throw new Exception("Failed to write BCD value.");
-            }
-            finally
-            {
-                try
+                // Find decimal point
+                int dppos = strValue.IndexOf(PERIODC);
+                if (dppos < 0)
+                    dppos = strValue.Length;
+
+                // Write fractional part (after decimal)
+                j = (dppos < strValue.Length) ? dppos + 1 : strValue.Length;
+                i = 0;
+                while (i < bCDDecLen && j < valueChars.Length)
                 {
-                    var postReadPos = writer.BaseStream.Position;
-                    if (postReadPos != writreInitPos + bCDDataLen)
+                    char c = valueChars[j];
+                    if (c >= ZEROC && c <= NINEC)
                     {
-                        writer.BaseStream.Position = writreInitPos + bCDDataLen; // Reset the position to the end of the BCD data.
+                        int nibble = (c - ZEROC) ^ sign;
+                        int index = (bCDNibbleLen - bCDDecLen + i) / 2;
+                        if (((bCDNibbleLen - bCDDecLen + i) % 2) != 0)
+                            outputBuf[index] = (byte)((outputBuf[index] & TWOFORTY) | nibble);
+                        else
+                            outputBuf[index] = (byte)((outputBuf[index] & FIFTEEN) | (nibble << 4));
+                        i++;
                     }
+                    j++;
                 }
-                catch // Ingore this catch??
+
+                // Write integer part (before decimal)
+                j = dppos - 1;
+                i = bCDNibbleLen - bCDDecLen - 1;
+                while (i > 1 && j >= 0)
                 {
-                    //throw;
+                    char c = valueChars[j];
+                    if (c >= ZEROC && c <= NINEC)
+                    {
+                        int nibble = (c - ZEROC) ^ sign;
+                        int index = i / 2;
+                        if ((i % 2) != 0)
+                            outputBuf[index] = (byte)((outputBuf[index] & TWOFORTY) | nibble);
+                        else
+                            outputBuf[index] = (byte)((outputBuf[index] & FIFTEEN) | (nibble << 4));
+                        i--;
+                    }
+                    j--;
                 }
             }
+
+            // Write the result to the stream
+            writer.Write(outputBuf, 0, bCDDataLen);
         }
+
+
 
     }
 
@@ -851,8 +846,7 @@ namespace ParadoxReader
                                     break;
                                 case ParadoxFieldTypes.BCD:
                                     var decBCD = reader.ReadBCD(bCDDecLen, dataSize);
-                                    var dblBCD = decBCD > decimal.MinValue ? (double)decBCD : double.NaN;
-                                    val = (double.IsNaN(dblBCD)) ? (object)DBNull.Value : dblBCD;
+                                    val = decBCD;
                                     break;
                                 case ParadoxFieldTypes.Date:
                                     ConvertBytes(preReadPos, dataSize, inverse: false);
@@ -973,21 +967,8 @@ namespace ParadoxReader
                                     writer.Write(numberDblVal);
                                     ConvertBytesNum(preWritePos, dataSize, inverse: true);
                                     break;
-
-
-
-
-                                    //ConvertBytesNum(preReadPos, dataSize, inverse: false);
-                                    //var dbl = reader.ReadDouble();
-                                    //val = (double.IsNaN(dbl)) ? (object)DBNull.Value : dbl;
-                                    //break;
-
-
-
-
-
                                 case ParadoxFieldTypes.BCD:
-                                    var bCDVal = (decimal)(double)val;
+                                    var bCDVal = (decimal)val;
                                     writer.WriteBCD(bCDVal, bCDDecLen);
                                     break;
                                 case ParadoxFieldTypes.Date:
@@ -1103,28 +1084,16 @@ namespace ParadoxReader
         public static void ConvertBytesNum(byte[] data, int offset, int length, bool inverse)
         {
 
-            if (length != 8)
-            {
-                throw new Exception("Expected length of 8 for ConvertBytesNum, but got " + length.ToString());
-            }
-
             if (inverse)
             {
                 Array.Reverse(data, offset, length);
             }
 
-            if ((data[offset] & 0x80) != (inverse ? 0x80 : 0))
+            if ((data[offset] & 0x80) != (inverse ? 0x80 : 0)) // First byte has high bit that needs to be flipped
             {
                 data[offset] ^= 0x80; // Flip high bit
             }
-            else if (data[offset + 0] == 0 &&
-                data[offset + 1] == 0 &&
-                data[offset + 2] == 0 &&
-                data[offset + 3] == 0 &&
-                data[offset + 4] == 0 &&
-                data[offset + 5] == 0 &&
-                data[offset + 6] == 0 &&
-                data[offset + 7] == 0)
+            else if (data.Skip(offset).Take(length).All(b => b == 0)) // All bytes zero
             {
                 // Do nothing
             }
