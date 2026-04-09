@@ -84,10 +84,10 @@ namespace ParadoxTest
                     tmpDataValues[1] = "ZZZ"; // ZZZ
                     tmpDataValues[2] = -999.99d;
                     tmpDataValues[3] = 999.99d;
-                    tmpDataValues[4] = (short)999;
+                    tmpDataValues[4] = (short)-999;
                     tmpDataValues[5] = 999;
                     tmpDataValues[6] = -999.99M; // 999.99d;
-                    tmpDataValues[7] = now;
+                    tmpDataValues[7] = now.Date;
                     tmpDataValues[8] = now.TimeOfDay;
                     tmpDataValues[9] = now;
                     tmpDataValues[10] = false;

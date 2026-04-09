@@ -528,7 +528,7 @@ namespace ParadoxReader
         /// <param name="avoidThrow">Avoid throwing exception and instead return decimal.minvalue</param>
         /// <returns>Decimal value of the binary coded decimal</returns>
         /// <exception cref="Exception">Decimal length doesn't match, or couldn't parse the BCD string value.</exception>
-        public static decimal ReadBCD(this BinaryReader reader, int bCDDecLen = 2, int bCDDataLen = 17, bool checkBCDDecLen = false, bool avoidThrow = true)
+        public static decimal ReadPdoxBCD(this BinaryReader reader, int bCDDecLen = 2, int bCDDataLen = 17, bool checkBCDDecLen = false, bool avoidThrow = true)
         {
 
             var ret = decimal.MinValue;
@@ -673,11 +673,7 @@ namespace ParadoxReader
             return ret;
         }
 
-
-
-
-
-        public static void WriteBCD(this BinaryWriter writer, decimal value, int bCDDecLen = 2, int bCDDataLen = 17)
+        public static void WritePdoxBCD(this BinaryWriter writer, decimal value, int bCDDecLen = 2, int bCDDataLen = 17)
         {
             var outputBuf = new byte[bCDDataLen];
             byte sign;
@@ -766,7 +762,213 @@ namespace ParadoxReader
             writer.Write(outputBuf, 0, bCDDataLen);
         }
 
+        /// <summary>
+        /// Converts the given byte array for a number (int or short) field, handling the bit flipping and endianness as needed for Paradox files. If inverse is false, it converts from the Paradox file format to the standard format. If inverse is true, it converts from the standard format to the Paradox file format.
+        /// </summary>
+        /// <param name="inverse">False = Read mode, True = Write mode</param>
+        private static void ConvertBytesForInteger(byte[] data, int length, bool inverse, int start = 0)
+        {
+            if (!inverse)
+            {
+                data[start] ^= 0x80; // Flips the first bit.
+            }
+            Array.Reverse(data, start, length);
+            if (inverse)
+            {
+                data[start] ^= 0x80; // Flips the first bit.
+            }
+        }
 
+        /// <summary>
+        /// Converts the given byte array for a number (double) field, handling the bit flipping and endianness as needed for Paradox files. If inverse is false, it converts from the Paradox file format to the standard format. If inverse is true, it converts from the standard format to the Paradox file format.
+        /// </summary>
+        /// <param name="inverse">False = Read mode, True = Write mode</param>
+        public static void ConvertBytesForDouble(byte[] data, int length, bool inverse, int start = 0)
+        {
+
+            if (inverse)
+            {
+                Array.Reverse(data, start, length);
+            }
+
+            if ((data[start] & 0x80) != (inverse ? 0x80 : 0)) // First byte has high bit that needs to be flipped
+            {
+                data[start] ^= 0x80; // Flip high bit
+            }
+            else if (data.Skip(start).Take(length).All(b => b == 0)) // All bytes zero
+            {
+                // Do nothing
+            }
+            else
+            {
+                // Invert all bits
+                for (int i = 0; i < length; i++)
+                {
+                    data[start + i] = (byte)(~data[start + i]);
+                }
+            }
+
+            if (!inverse)
+            {
+                Array.Reverse(data, start, length);
+            }
+
+        }
+
+
+        public static short ReadPdoxShort(this BinaryReader reader, int dataSize)
+        {
+            return reader.ReadPdoxNum<short>(dataSize);
+        }
+
+        public static void WritePdoxShort(this BinaryWriter writer, short value, int dataSize)
+        {
+            writer.WritePdoxNum<short>(value, dataSize);
+        }
+
+        public static int ReadPdoxInt(this BinaryReader reader, int dataSize)
+        {
+            return reader.ReadPdoxNum<int>(dataSize);
+        }
+
+        public static void WritePdoxInt(this BinaryWriter writer, int value, int dataSize)
+        {
+            writer.WritePdoxNum<int>(value, dataSize);
+        }
+
+        public static double ReadPdoxDouble(this BinaryReader reader, int dataSize)
+        {
+            return reader.ReadPdoxNum<double>(dataSize);
+        }
+
+        public static void WritePdoxDouble(this BinaryWriter writer, double value, int dataSize)
+        {
+            writer.WritePdoxNum<double>(value, dataSize);
+        }
+
+        public static DateTime ReadPdoxDate(this BinaryReader reader, int dataSize)
+        {
+            var days = reader.ReadPdoxInt(dataSize);
+            return new DateTime(1, 1, 1).AddDays(days > 0 ? days - 1 : 0);
+        }
+
+        public static void WritePdoxDate(this BinaryWriter writer, DateTime value, int dataSize)
+        {
+            var days = (int)((value.Date - DateTime.MinValue).TotalDays);
+            days = (days < 0) ? 0 : days + 1; // Paradox dates are 1-based, and have no representation for dates before 0001-01-01, so we set those to 0.
+            writer.WritePdoxInt(days, dataSize);
+        }
+
+        public static TimeSpan ReadPdoxTime(this BinaryReader reader, int dataSize)
+        {
+            var msInt = reader.ReadPdoxInt(dataSize);
+            return TimeSpan.FromMilliseconds(msInt >= 0 ? msInt : 0);
+        }
+
+        public static void WritePdoxTime(this BinaryWriter writer, TimeSpan value, int dataSize)
+        {
+            var msInt = (int)(value.TotalMilliseconds);
+            msInt = (msInt < 0) ? 0 : msInt;
+            writer.WritePdoxInt(msInt, dataSize);
+        }
+
+        public static DateTime ReadPdoxTimestamp(this BinaryReader reader, int dataSize)
+        {
+            var msDbl = reader.ReadPdoxDouble(dataSize);
+            // TODO: Handle too large a value?
+            return new DateTime(1, 1, 1).AddMilliseconds(msDbl >= 0 ? msDbl : 0).AddDays(msDbl >= 86400000 ? -1 : 0);
+        }
+
+        public static void WritePdoxTimestamp(this BinaryWriter writer, DateTime value, int dataSize)
+        {
+            var msDbl = ((value - DateTime.MinValue).TotalMilliseconds);
+            msDbl = (msDbl < 0) ? 0 : msDbl + 86400000; // Paradox dates are 1-based, and have no representation for dates before 0001-01-01, so we set those to 0.
+            writer.WritePdoxDouble(msDbl, dataSize);
+        }
+
+        public static bool ReadPdoxBool(this BinaryReader reader, int dataSize)
+        {
+            var b = reader.ReadByte();
+            var ret = b > 128;
+            reader.BaseStream.Position += dataSize - 1; // We've already read one byte, so move the position to the end of the bool data.
+            return ret;
+        }
+
+        public static void WritePdoxBool(this BinaryWriter writer, bool value, int dataSize)
+        {
+            writer.Write((byte)(value ? 129 : 128));
+            writer.BaseStream.Position += dataSize - 1; // We've already written one byte, so move the position to the end of the bool data.
+        }
+
+        public static byte[] ReadPdoxBytes(this BinaryReader reader, int dataSize)
+        {
+            return reader.ReadBytes(dataSize);
+        }
+
+        public static void WritePdoxBytes(this BinaryWriter writer, byte[] value, int dataSize)
+        {
+            if (value == null)
+            {
+                value = new byte[dataSize];
+            }
+            else if (value.Length != dataSize)
+            {
+                var tmp = new byte[dataSize];
+                Array.Copy(value, tmp, Math.Min(value.Length, dataSize));
+                value = tmp;
+            }
+            writer.Write(value, 0, dataSize);
+        }
+
+        private static void CheckTDataSize<T>(int dataSize)
+        {
+            var sizeOfT = System.Runtime.InteropServices.Marshal.SizeOf<T>();
+            if (dataSize != sizeOfT) { throw new Exception($"Paradox field data size for {typeof(T).Name} should be {sizeOfT} bytes, but was {dataSize} bytes."); };
+        }
+
+        private static T ReadPdoxNum<T>(this BinaryReader reader, int dataSize) where T : struct
+        {
+            CheckTDataSize<T>(dataSize);
+            var data = reader.ReadBytes(dataSize);
+            switch(typeof(T))
+                {
+                case Type t when t == typeof(short):
+                    ConvertBytesForInteger(data, dataSize, inverse: false);
+                    return (T)(object)BitConverter.ToInt16(data, 0);
+                case Type t when t == typeof(int):
+                    ConvertBytesForInteger(data, dataSize, inverse: false);
+                    return (T)(object)BitConverter.ToInt32(data, 0);
+                case Type t when t == typeof(double):
+                    ConvertBytesForDouble(data, dataSize, inverse: false);
+                    return (T)(object)BitConverter.ToDouble(data, 0);
+                default:
+                    throw new Exception($"Unsupported type {typeof(T)}");
+            }
+        }
+
+        private static void WritePdoxNum<T>(this BinaryWriter writer, T value, int dataSize) where T : struct
+        {
+            CheckTDataSize<T>(dataSize);
+            byte[] data = null;
+            switch (typeof(T))
+            {
+                case Type t when t == typeof(short):
+                    data = data = BitConverter.GetBytes((short)(object)value);
+                    ConvertBytesForInteger(data, dataSize, inverse: true);
+                    break;
+                case Type t when t == typeof(int):
+                    data = data = BitConverter.GetBytes((int)(object)value);
+                    ConvertBytesForInteger(data, dataSize, inverse: true);
+                    break;
+                case Type t when t == typeof(double):
+                    data = data = BitConverter.GetBytes((double)(object)value);
+                    ConvertBytesForDouble(data, dataSize, inverse: true);
+                    break;
+                default:
+                    throw new Exception($"Unsupported type {typeof(T)}");
+            }
+            writer.Write(data, 0, dataSize);
+        }
 
     }
 
@@ -830,43 +1032,33 @@ namespace ParadoxReader
                                     buff.Position += dataSize;
                                     break;
                                 case ParadoxFieldTypes.Short:
-                                    ConvertBytes(preReadPos, dataSize, inverse: false);
-                                    val = reader.ReadInt16();
+                                    val = reader.ReadPdoxShort(dataSize);
                                     break;
                                 case ParadoxFieldTypes.Long:
                                 case ParadoxFieldTypes.AutoInc:
-                                    ConvertBytes(preReadPos, dataSize, inverse: false);
-                                    val = reader.ReadInt32();
+                                    val = reader.ReadPdoxInt(dataSize);
                                     break;
                                 case ParadoxFieldTypes.Currency:
                                 case ParadoxFieldTypes.Number:
-                                    ConvertBytesNum(preReadPos, dataSize, inverse: false);
-                                    var dbl = reader.ReadDouble();
-                                    val = (double.IsNaN(dbl)) ? (object)DBNull.Value : dbl;
+                                    val = reader.ReadPdoxDouble(dataSize);
                                     break;
                                 case ParadoxFieldTypes.BCD:
-                                    var decBCD = reader.ReadBCD(bCDDecLen, dataSize);
-                                    val = decBCD;
+                                    val = reader.ReadPdoxBCD(bCDDecLen, dataSize);
                                     break;
                                 case ParadoxFieldTypes.Date:
-                                    ConvertBytes(preReadPos, dataSize, inverse: false);
-                                    var days = reader.ReadInt32();
-                                    val = new DateTime(1, 1, 1).AddDays(days > 0 ? days - 1 : 0);
-                                    break;
-                                case ParadoxFieldTypes.Timestamp:
-                                    ConvertBytes(preReadPos, dataSize, inverse: false);
-                                    var msDbl = reader.ReadDouble();
-                                    val = new DateTime(1, 1, 1).AddMilliseconds(msDbl >= 0 ? msDbl : 0).AddDays(msDbl >= 86400000 ? -1 : 0);
+                                    val = reader.ReadPdoxDate(dataSize);
                                     break;
                                 case ParadoxFieldTypes.Time:
-                                    ConvertBytes(preReadPos, dataSize, inverse: false);
-                                    var msInt = reader.ReadInt32();
-                                    val = TimeSpan.FromMilliseconds(msInt >= 0 ? msInt : 0);
+                                    val = reader.ReadPdoxTime(dataSize);
+                                    break;
+                                case ParadoxFieldTypes.Timestamp:
+                                    val = reader.ReadPdoxTimestamp(dataSize);
                                     break;
                                 case ParadoxFieldTypes.Logical:
-                                    // False is stored as 128, and True looks like 129.
-                                    val = (this.block.data[(int)buff.Position] - 128) > 0;
-                                    buff.Position += dataSize;
+                                    //// False is stored as 128, and True looks like 129.
+                                    //val = (this.block.data[(int)buff.Position] - 128) > 0;
+                                    //buff.Position += dataSize;
+                                    val = reader.ReadPdoxBool(dataSize);
                                     break;
                                 case ParadoxFieldTypes.BLOb:
                                 case ParadoxFieldTypes.OLE:
@@ -901,7 +1093,8 @@ namespace ParadoxReader
                                     break;
                                 case ParadoxFieldTypes.Bytes:
                                     //val = r.ReadBytesIntoBase64String(dataSize); // Do we want bytes as bytes or base64 string?
-                                    val = reader.ReadBytes(dataSize); // Do we want bytes as bytes or base64 string?
+                                    //val = reader.ReadBytes(dataSize); // Do we want bytes as bytes or base64 string?
+                                    val = reader.ReadPdoxBytes(dataSize);
                                     break;
                                 default:
                                     val = null; // not supported
@@ -936,7 +1129,8 @@ namespace ParadoxReader
                             var bCDDecLen = fInfo.fType == ParadoxFieldTypes.BCD ? fInfo.fSize : 0;
                             var blobHsize = fInfo.fType == ParadoxFieldTypes.Graphic ? GraphicHsize : OtherBlobHsize;
                             var preWritePos = (int)buff.Position;
-                            var empty = val == DBNull.Value;
+                            var empty = val == DBNull.Value
+                                || val == null;
                             if (empty)
                             {
                                 writer.Write(new byte[dataSize], 0, dataSize);
@@ -951,62 +1145,39 @@ namespace ParadoxReader
                                     break;
                                 case ParadoxFieldTypes.Short:
                                     var int16Val = (short)val;
-                                    writer.Write(int16Val);
-                                    ConvertBytes(preWritePos, dataSize, inverse: true);
+                                    writer.WritePdoxShort(int16Val, dataSize);
                                     break;
                                 case ParadoxFieldTypes.Long:
                                 case ParadoxFieldTypes.AutoInc:
                                     var int32Val = (int)val;
-                                    writer.Write(int32Val);
-                                    ConvertBytes(preWritePos, dataSize, inverse: true);
+                                    writer.WritePdoxInt(int32Val, dataSize);
                                     break;
                                 case ParadoxFieldTypes.Currency:
                                 case ParadoxFieldTypes.Number:
                                     var numberDblVal = (double)val;
-                                    if(double.IsNaN(numberDblVal)) { numberDblVal = default(double); } // Set to zero?
-                                    writer.Write(numberDblVal);
-                                    ConvertBytesNum(preWritePos, dataSize, inverse: true);
+                                    writer.WritePdoxDouble(numberDblVal, dataSize);
                                     break;
                                 case ParadoxFieldTypes.BCD:
                                     var bCDVal = (decimal)val;
-                                    writer.WriteBCD(bCDVal, bCDDecLen);
+                                    writer.WritePdoxBCD(bCDVal, bCDDecLen);
                                     break;
                                 case ParadoxFieldTypes.Date:
-                                    var dateVal = (((DateTime)val) - ParadoxBaseDate).TotalDays - 1;
-                                    if (dateVal < 0)
-                                    {
-                                        dateVal = 0; // Ensure we don't write negative days
-                                    }
-                                    writer.Write(dateVal);
-                                    ConvertBytes(preWritePos, dataSize, inverse: true);
-                                    break;
-                                case ParadoxFieldTypes.Timestamp:
-                                    var timestampDTVal = ((DateTime)val);
-                                    double timestampVal;
-                                    // Calculate total milliseconds from baseDate to val
-                                    double totalMilliseconds = (timestampDTVal - ParadoxBaseDate).TotalMilliseconds;
-                                    // Check if a day was subtracted (val is earlier than expected for large msDbl)
-                                    if (timestampDTVal < ParadoxBaseDate.AddMilliseconds(86400000))
-                                    {
-                                        // If a day was subtracted, add back 86,400,000 ms
-                                        timestampVal = totalMilliseconds + 86400000;
-                                    }
-                                    else
-                                    {
-                                        // No day was subtracted, use total milliseconds directly
-                                        timestampVal = totalMilliseconds;
-                                    }
-                                    writer.Write(timestampVal);
-                                    ConvertBytes(preWritePos, dataSize, inverse: true);
+                                    var dateVal = (DateTime)val;
+                                    writer.WritePdoxDate(dateVal, dataSize);
                                     break;
                                 case ParadoxFieldTypes.Time:
-                                    var timeVal = ((TimeSpan)val).TotalMilliseconds;
-                                    writer.Write(timeVal);
-                                    ConvertBytes(preWritePos, dataSize, inverse: true);
+                                    var timeVal = (TimeSpan)val;
+                                    writer.WritePdoxTime(timeVal, dataSize);
+                                    break;
+                                case ParadoxFieldTypes.Timestamp:
+                                    var timestampDTVal = (DateTime)val;
+                                    writer.WritePdoxTimestamp(timestampDTVal, dataSize);
                                     break;
                                 case ParadoxFieldTypes.Logical:
-                                    int logicalVal = (bool)val ? 129 : 128; // True is stored as 129, and False looks like 128.
-                                    writer.Write(logicalVal);
+                                    //int logicalVal = (bool)val ? 129 : 128; // True is stored as 129, and False looks like 128.
+                                    //writer.Write(logicalVal);
+                                    bool boolVal = (bool)val;
+                                    writer.WritePdoxBool(boolVal, dataSize);
                                     break;
                                 case ParadoxFieldTypes.BLOb:
                                 case ParadoxFieldTypes.OLE:
@@ -1033,17 +1204,18 @@ namespace ParadoxReader
                                     break;
                                 case ParadoxFieldTypes.Bytes:
                                     byte[] bytesVal = val as byte[];
-                                    if (bytesVal == null)
-                                    {
-                                        bytesVal = new byte[dataSize];
-                                    }
-                                    else if (bytesVal.Length != dataSize)
-                                    {
-                                        var tmp = new byte[dataSize];
-                                        Array.Copy(bytesVal, tmp, Math.Min(bytesVal.Length, dataSize));
-                                        bytesVal = tmp;
-                                    }
-                                    writer.Write(bytesVal, 0, dataSize);
+                                    //if (bytesVal == null)
+                                    //{
+                                    //    bytesVal = new byte[dataSize];
+                                    //}
+                                    //else if (bytesVal.Length != dataSize)
+                                    //{
+                                    //    var tmp = new byte[dataSize];
+                                    //    Array.Copy(bytesVal, tmp, Math.Min(bytesVal.Length, dataSize));
+                                    //    bytesVal = tmp;
+                                    //}
+                                    //writer.Write(bytesVal, 0, dataSize);
+                                    writer.WritePdoxBytes(bytesVal, dataSize);
                                     break;
                                 default:
                                     writer.Write(new byte[dataSize], 0, dataSize);
