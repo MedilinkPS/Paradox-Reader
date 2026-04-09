@@ -262,37 +262,37 @@ namespace ParadoxReader
             }
         }
 
-        public string GetString(byte[] data, int from, int maxLength)
-        {
-            int dataLength = data.Length;
-            int stringLength = Array.FindIndex(data, from, b => b == 0) - from;
-            if (stringLength > maxLength)
-                stringLength = maxLength;
-            if (stringLength < 0)
-                stringLength = 0;
-            if (from < 0)
-                from = 0;
-            if ((from + stringLength) > dataLength)
-                stringLength = dataLength;
-            return Encoding.Default.GetString(data, from, stringLength);
-        }
+        //public string GetString(byte[] data, int from, int maxLength)
+        //{
+        //    int dataLength = data.Length;
+        //    int stringLength = Array.FindIndex(data, from, b => b == 0) - from;
+        //    if (stringLength > maxLength)
+        //        stringLength = maxLength;
+        //    if (stringLength < 0)
+        //        stringLength = 0;
+        //    if (from < 0)
+        //        from = 0;
+        //    if ((from + stringLength) > dataLength)
+        //        stringLength = dataLength;
+        //    return Encoding.Default.GetString(data, from, stringLength);
+        //}
 
-        public string GetStringFromMemo(byte[] data, int from, int size)
-        {
-            var memoBufferSize = size - 10;
-            var memoDataBuffer = new byte[memoBufferSize];
-            var memoMetaData = new byte[10];
-            Array.Copy(data, from, memoDataBuffer, 0, memoBufferSize);
-            Array.Copy(data, from + memoBufferSize, memoMetaData, 0, 10);
+        //public string GetStringFromMemo(byte[] data, int from, int size)
+        //{
+        //    var memoBufferSize = size - 10;
+        //    var memoDataBuffer = new byte[memoBufferSize];
+        //    var memoMetaData = new byte[10];
+        //    Array.Copy(data, from, memoDataBuffer, 0, memoBufferSize);
+        //    Array.Copy(data, from + memoBufferSize, memoMetaData, 0, 10);
 
-            //var offsetIntoMemoFile = (long)BitConverter.ToInt32(memoMetaData, 0); 
-            //offsetIntoMemoFile &= 0xffffff00;
-            //var memoModNumber = BitConverter.ToInt16(memoMetaData,8); 
-            //var index = memoMetaData[0]; 
+        //    //var offsetIntoMemoFile = (long)BitConverter.ToInt32(memoMetaData, 0); 
+        //    //offsetIntoMemoFile &= 0xffffff00;
+        //    //var memoModNumber = BitConverter.ToInt16(memoMetaData,8); 
+        //    //var index = memoMetaData[0]; 
 
-            var memoSize = BitConverter.ToInt32(memoMetaData, 4);
-            return GetString(memoDataBuffer, 0, memoSize);
-        }
+        //    var memoSize = BitConverter.ToInt32(memoMetaData, 4);
+        //    return GetString(memoDataBuffer, 0, memoSize);
+        //}
 
         public class V4Hdr
         {
@@ -485,36 +485,36 @@ namespace ParadoxReader
     public static class BinaryReaderExtension
     {
 
-        public static string ReadBytesIntoBase64String(this BinaryReader reader, int count, bool returnNullInsteadOfThrow = true)
-        {
-            string ret = null; // string.Empty;
+        //public static string ReadBytesIntoBase64String(this BinaryReader reader, int count, bool returnNullInsteadOfThrow = true)
+        //{
+        //    string ret = null; // string.Empty;
 
-            try
-            {
-                var buff = reader.ReadBytes(count);
-                if ((buff?.Length ?? 0) > 0)
-                {
-                    ret = Convert.ToBase64String(buff);
-                }
-                else
-                {
-                    throw new Exception("Could not read bytes.");
-                }
-            }
-            catch
-            {
-                if(returnNullInsteadOfThrow)
-                {
-                    ret = null;
-                }
-                else //(Exception ex)
-                {
-                    throw;
-                }
-            }
+        //    try
+        //    {
+        //        var buff = reader.ReadBytes(count);
+        //        if ((buff?.Length ?? 0) > 0)
+        //        {
+        //            ret = Convert.ToBase64String(buff);
+        //        }
+        //        else
+        //        {
+        //            throw new Exception("Could not read bytes.");
+        //        }
+        //    }
+        //    catch
+        //    {
+        //        if(returnNullInsteadOfThrow)
+        //        {
+        //            ret = null;
+        //        }
+        //        else //(Exception ex)
+        //        {
+        //            throw;
+        //        }
+        //    }
 
-            return ret;
-        }
+        //    return ret;
+        //}
 
 
 
@@ -816,6 +816,19 @@ namespace ParadoxReader
         }
 
 
+        public static string ReadPdoxString(this BinaryReader reader, int dataSize)
+        {
+            byte[] bytes = reader.ReadBytes(dataSize);
+            int stringLength = Array.IndexOf(bytes, (byte)0);
+            if (stringLength < 0) stringLength = dataSize; // No null found, use all bytes
+            return Encoding.Default.GetString(bytes, 0, stringLength);
+        }
+
+        public static void WritePdoxString(this BinaryWriter writer, string value, int dataSize)
+        {
+            writer.Write((value ?? string.Empty).PadRight(dataSize, '\0').Substring(0, dataSize).ToCharArray());
+        }
+
         public static short ReadPdoxShort(this BinaryReader reader, int dataSize)
         {
             return reader.ReadPdoxNum<short>(dataSize);
@@ -1028,8 +1041,7 @@ namespace ParadoxReader
                             switch (fInfo.fType)
                             {
                                 case ParadoxFieldTypes.Alpha:
-                                    val = this.block.file.GetString(this.block.data, (int)buff.Position, dataSize);
-                                    buff.Position += dataSize;
+                                    val = reader.ReadPdoxString(dataSize);
                                     break;
                                 case ParadoxFieldTypes.Short:
                                     val = reader.ReadPdoxShort(dataSize);
@@ -1055,9 +1067,6 @@ namespace ParadoxReader
                                     val = reader.ReadPdoxTimestamp(dataSize);
                                     break;
                                 case ParadoxFieldTypes.Logical:
-                                    //// False is stored as 128, and True looks like 129.
-                                    //val = (this.block.data[(int)buff.Position] - 128) > 0;
-                                    //buff.Position += dataSize;
                                     val = reader.ReadPdoxBool(dataSize);
                                     break;
                                 case ParadoxFieldTypes.BLOb:
@@ -1140,8 +1149,8 @@ namespace ParadoxReader
                             {
 
                                 case ParadoxFieldTypes.Alpha:
-                                    var strVal = val as string ?? string.Empty;
-                                    writer.Write(strVal.PadRight(dataSize, '\0').Substring(0, dataSize).ToCharArray());
+                                    var strVal = val as string;
+                                    writer.WritePdoxString(strVal, dataSize);
                                     break;
                                 case ParadoxFieldTypes.Short:
                                     var int16Val = (short)val;
@@ -1174,8 +1183,6 @@ namespace ParadoxReader
                                     writer.WritePdoxTimestamp(timestampDTVal, dataSize);
                                     break;
                                 case ParadoxFieldTypes.Logical:
-                                    //int logicalVal = (bool)val ? 129 : 128; // True is stored as 129, and False looks like 128.
-                                    //writer.Write(logicalVal);
                                     bool boolVal = (bool)val;
                                     writer.WritePdoxBool(boolVal, dataSize);
                                     break;
@@ -1204,17 +1211,6 @@ namespace ParadoxReader
                                     break;
                                 case ParadoxFieldTypes.Bytes:
                                     byte[] bytesVal = val as byte[];
-                                    //if (bytesVal == null)
-                                    //{
-                                    //    bytesVal = new byte[dataSize];
-                                    //}
-                                    //else if (bytesVal.Length != dataSize)
-                                    //{
-                                    //    var tmp = new byte[dataSize];
-                                    //    Array.Copy(bytesVal, tmp, Math.Min(bytesVal.Length, dataSize));
-                                    //    bytesVal = tmp;
-                                    //}
-                                    //writer.Write(bytesVal, 0, dataSize);
                                     writer.WritePdoxBytes(bytesVal, dataSize);
                                     break;
                                 default:
@@ -1233,57 +1229,57 @@ namespace ParadoxReader
 
 
 
-        private void ConvertBytes(int start, int length, bool inverse)
-        {
-            if (!inverse)
-            {
-                this.block.data[start] ^= 0x80; // Flips the first bit.
-            }
-            Array.Reverse(this.block.data, start, length);
-            if (inverse)
-            {
-                this.block.data[start] ^= 0x80; // Flips the first bit.
-            }
-        }
+        //private void ConvertBytes(int start, int length, bool inverse)
+        //{
+        //    if (!inverse)
+        //    {
+        //        this.block.data[start] ^= 0x80; // Flips the first bit.
+        //    }
+        //    Array.Reverse(this.block.data, start, length);
+        //    if (inverse)
+        //    {
+        //        this.block.data[start] ^= 0x80; // Flips the first bit.
+        //    }
+        //}
 
 
-        private void ConvertBytesNum(int start, int length, bool inverse)
-        {
-            ParadoxRecord.ConvertBytesNum(this.block.data, start, length, inverse);
-            // The data is now converted such that we can ReadDouble to obtain a double value.
-        }
+        //private void ConvertBytesNum(int start, int length, bool inverse)
+        //{
+        //    ParadoxRecord.ConvertBytesNum(this.block.data, start, length, inverse);
+        //    // The data is now converted such that we can ReadDouble to obtain a double value.
+        //}
 
-        public static void ConvertBytesNum(byte[] data, int offset, int length, bool inverse)
-        {
+        //public static void ConvertBytesNum(byte[] data, int offset, int length, bool inverse)
+        //{
 
-            if (inverse)
-            {
-                Array.Reverse(data, offset, length);
-            }
+        //    if (inverse)
+        //    {
+        //        Array.Reverse(data, offset, length);
+        //    }
 
-            if ((data[offset] & 0x80) != (inverse ? 0x80 : 0)) // First byte has high bit that needs to be flipped
-            {
-                data[offset] ^= 0x80; // Flip high bit
-            }
-            else if (data.Skip(offset).Take(length).All(b => b == 0)) // All bytes zero
-            {
-                // Do nothing
-            }
-            else
-            {
-                // Invert all bits
-                for (int i = 0; i < length; i++)
-                {
-                    data[offset + i] = (byte)(~data[offset + i]);
-                }
-            }
+        //    if ((data[offset] & 0x80) != (inverse ? 0x80 : 0)) // First byte has high bit that needs to be flipped
+        //    {
+        //        data[offset] ^= 0x80; // Flip high bit
+        //    }
+        //    else if (data.Skip(offset).Take(length).All(b => b == 0)) // All bytes zero
+        //    {
+        //        // Do nothing
+        //    }
+        //    else
+        //    {
+        //        // Invert all bits
+        //        for (int i = 0; i < length; i++)
+        //        {
+        //            data[offset + i] = (byte)(~data[offset + i]);
+        //        }
+        //    }
 
-            if (!inverse)
-            {
-                Array.Reverse(data, offset, length);
-            }
+        //    if (!inverse)
+        //    {
+        //        Array.Reverse(data, offset, length);
+        //    }
 
-        }
+        //}
 
 
     }
