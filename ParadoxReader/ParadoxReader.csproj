@@ -46,10 +46,27 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Db.cs" />
+    <Compile Include="BinaryReaderWriterPdoxExtensions.cs" />
+    <Compile Include="ExtensionMethods.cs" />
+    <Compile Include="ParadoxBlobFile.cs" />
+    <Compile Include="ParadoxFieldTypes.cs" />
+    <Compile Include="ParadoxFile.cs" />
+    <Compile Include="ParadoxTable.cs" />
+    <Compile Include="BlockManager.cs" />
+    <Compile Include="DataBlock.cs" />
     <Compile Include="Impl.cs" />
     <Compile Include="Index.cs" />
+    <Compile Include="IndexManager.cs" />
+    <Compile Include="KeySerializer.cs" />
+    <Compile Include="ParadoxDb.cs" />
+    <Compile Include="ParadoxFileLock.cs" />
+    <Compile Include="ParadoxRecord.cs" />
+    <Compile Include="PrimaryIndex.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="PxBlock.cs" />
+    <Compile Include="PxEntry.cs" />
+    <Compile Include="SecondaryIndex.cs" />
+    <Compile Include="SecondaryIndexDiscovery.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="app.config" />

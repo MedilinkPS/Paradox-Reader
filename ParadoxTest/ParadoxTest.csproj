@@ -68,6 +68,12 @@
     <None Include="data\testtabnoindex.DB">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
+    <None Include="data\testtabnoindex2.DB">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="data\testtabnoindex2.MB">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
     <None Include="data\zakazky.db">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

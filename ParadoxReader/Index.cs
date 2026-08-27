@@ -16,12 +16,12 @@ namespace ParadoxReader
             this.table = table;
         }
 
-        public IEnumerable<ParadoxRecord> Enumerate(ParadoxCondition condition)
+        public IEnumerable<ParadoxReader.ParadoxRecord> Enumerate(ParadoxCondition condition)
         {
             return Enumerate(condition, (ushort)(this.pxRootBlockId-1), this.pxLevelCount);
         }
 
-        private IEnumerable<ParadoxRecord> Enumerate(ParadoxCondition condition, ushort blockNumber, int indexLevel)
+        private IEnumerable<ParadoxReader.ParadoxRecord> Enumerate(ParadoxCondition condition, ushort blockNumber, int indexLevel)
         {
             if (indexLevel == 0)
             {
@@ -57,8 +57,8 @@ namespace ParadoxReader
 
     public abstract class ParadoxCondition
     {
-        public abstract bool IsDataOk(ParadoxRecord dataRec);
-        public abstract bool IsIndexPossible(ParadoxRecord indexRec, ParadoxRecord nextRec);
+        public abstract bool IsDataOk(ParadoxReader.ParadoxRecord dataRec);
+        public abstract bool IsIndexPossible(ParadoxReader.ParadoxRecord indexRec, ParadoxReader.ParadoxRecord nextRec);
 
         public class Compare : ParadoxCondition
         {
@@ -68,7 +68,7 @@ namespace ParadoxReader
             public int DataFieldIndex { get; private set; }
             public int IndexFieldIndex { get; private set; }
 
-            public override bool IsDataOk(ParadoxRecord dataRec)
+            public override bool IsDataOk(ParadoxReader.ParadoxRecord dataRec)
             {
                 var val = dataRec.DataValues[this.DataFieldIndex];
                 var comp = Comparer.Default.Compare(val, this.Value);
@@ -91,7 +91,7 @@ namespace ParadoxReader
                 }
             }
 
-            public override bool IsIndexPossible(ParadoxRecord indexRec, ParadoxRecord nextRec)
+            public override bool IsIndexPossible(ParadoxReader.ParadoxRecord indexRec, ParadoxReader.ParadoxRecord nextRec)
             {
                 var val1 = indexRec.DataValues[this.DataFieldIndex];
                 var comp1 = Comparer.Default.Compare(val1, this.Value);
@@ -142,12 +142,12 @@ namespace ParadoxReader
                 SubConditions = subConditions;
             }
 
-            public override bool IsDataOk(ParadoxRecord dataRec)
+            public override bool IsDataOk(ParadoxReader.ParadoxRecord dataRec)
             {
                 return this.Test(c => c.IsDataOk(dataRec));
             }
 
-            public override bool IsIndexPossible(ParadoxRecord indexRec, ParadoxRecord nextRec)
+            public override bool IsIndexPossible(ParadoxReader.ParadoxRecord indexRec, ParadoxReader.ParadoxRecord nextRec)
             {
                 return this.Test(c => c.IsIndexPossible(indexRec, nextRec));
             }

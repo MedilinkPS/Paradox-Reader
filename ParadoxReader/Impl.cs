@@ -9,14 +9,14 @@ namespace ParadoxReader
     {
         public ParadoxFile File { get; private set; }
 
-        private IEnumerator<ParadoxRecord> enumerator;
+        private IEnumerator<ParadoxReader.ParadoxRecord> enumerator;
 
-        public ParadoxRecord CurrentRecord
+        public ParadoxReader.ParadoxRecord CurrentRecord
         {
             get { return this.enumerator.Current; }
         }
 
-        public ParadoxDataReader(ParadoxFile file, IEnumerable<ParadoxRecord> query)
+        public ParadoxDataReader(ParadoxFile file, IEnumerable<ParadoxReader.ParadoxRecord> query)
         {
             this.File = file;
             this.enumerator = query.GetEnumerator();

@@ -29,8 +29,8 @@ namespace ParadoxTest
             var dbTableFilePaths = Directory.GetFiles(dbPath, "*.DB");
             var dbTableFilePathsCount = dbTableFilePaths?.Length ?? 0;
 
-            //var desiredTestTableName = "TESTTAB.DB";
-            var desiredTestTableName = "TESTTABNOINDEX.DB";
+            var desiredTestTableName = "TESTTAB.DB";
+            //var desiredTestTableName = "TESTTABNOINDEX2.DB";
 
             testTablePath = dbTableFilePaths.FirstOrDefault(path => path.IndexOf(desiredTestTableName, StringComparison.OrdinalIgnoreCase) >= 0);
 
@@ -91,13 +91,15 @@ namespace ParadoxTest
                     tmpDataValues[8] = now.TimeOfDay;
                     tmpDataValues[9] = now;
                     tmpDataValues[10] = false;
-                    //tmpDataValues[11] = new byte[] { (byte)9 };
-                    //tmpDataValues[12] = new byte[] { (byte)9 };
-                    //tmpDataValues[13] = "ZZZ";
+                    tmpDataValues[11] = new byte[] { (byte)9, (byte)9, (byte)9 };
+                    tmpDataValues[12] = new byte[] { (byte)9, (byte)9, (byte)9 };
+                    tmpDataValues[13] = "ZZZ";
 
                     Console.WriteLine("Setting Record #{0}", recIndex);
 
                     rec.DataValues = tmpDataValues;
+
+                    rec.Save(); // Serialize DataValues back to block and write to disk
 
                     Console.WriteLine("Re-reading Record #{0}", recIndex);
                     for (int i = 0; i < table.FieldCount; i++)
