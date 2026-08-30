@@ -181,15 +181,20 @@ namespace ParadoxReader
                     var blobInfo = r.ReadBytes(field.fSize);
                     var blob     = file.ReadBlob(blobInfo, field.fSize, 10);
                     if (blob == null) return null;
-                    return System.Text.Encoding.Default.GetString(blob);
+                    var text = System.Text.Encoding.Default.GetString(blob);
+                    return new MemoValue(text, blobInfo);
                 }
 
                 case ParadoxFieldTypes.BLOb:
                 case ParadoxFieldTypes.OLE:
                 case ParadoxFieldTypes.Graphic:
                 {
+                    // Return the raw reference bytes from the .DB record (the blob pointer).
+                    // These must survive the read → modify → write cycle unchanged so the
+                    // .MB entry they point to is never orphaned.
+                    // Use file.ReadBlob(blobInfo, ...) separately if you need the content.
                     var blobInfo = r.ReadBytes(field.fSize);
-                    return file.ReadBlob(blobInfo, field.fSize, 10);
+                    return blobInfo;
                 }
 
                 case ParadoxFieldTypes.Bytes:
@@ -218,8 +223,13 @@ namespace ParadoxReader
                     w.WritePdoxShort(value is short s ? s : Convert.ToInt16(value ?? 0), field.fSize);
                     break;
 
-                case ParadoxFieldTypes.Long:
                 case ParadoxFieldTypes.AutoInc:
+                    // AutoInc is managed by Paradox — skip writing any user-supplied value
+                    // by advancing the writer position without changing the underlying bytes.
+                    w.BaseStream.Seek(field.fSize, SeekOrigin.Current);
+                    break;
+
+                case ParadoxFieldTypes.Long:
                     w.WritePdoxInt(value is int i ? i : Convert.ToInt32(value ?? 0), field.fSize);
                     break;
 
@@ -254,9 +264,36 @@ namespace ParadoxReader
                 case ParadoxFieldTypes.MemoBLOb:
                 case ParadoxFieldTypes.FmtMemoBLOb:
                 {
-                    // For blobs we write the blobInfo reference bytes (not the blob data itself)
-                    byte[] blobRef = value as byte[] ?? new byte[field.fSize];
-                    w.WritePdoxBytes(blobRef, field.fSize);
+                    if (value is MemoValue mv && mv.BlobInfo != null)
+                    {
+                        // Encode the new text and overwrite the slot in the .MB file.
+                        byte[] encoded = System.Text.Encoding.Default.GetBytes(mv.Text ?? string.Empty);
+                        file.WriteBlob(mv.BlobInfo, field.fSize, 10, encoded);
+
+                        int leader = field.fSize - 10;
+
+                        // The first `leader` bytes of blobInfo are an inline prefix of the
+                        // text content stored directly in the .DB record.  Update them so
+                        // the .DB record reflects the new text value.
+                        if (leader > 0)
+                        {
+                            int copyLen = Math.Min(leader, encoded.Length);
+                            Array.Copy(encoded, 0, mv.BlobInfo, 0, copyLen);
+                            // Zero any remaining leader bytes when the new text is shorter.
+                            for (int li = copyLen; li < leader; li++)
+                                mv.BlobInfo[li] = 0;
+                        }
+
+                        // Note: WriteBlob has already updated blobInfo[leader+8] (mod_nr)
+                        // to the new global slot sequence value — no separate increment needed.
+                        w.WritePdoxBytes(mv.BlobInfo, field.fSize);
+                    }
+                    else
+                    {
+                        // Fallback: write whatever reference bytes we have (or zeros).
+                        byte[] blobRef = value as byte[] ?? new byte[field.fSize];
+                        w.WritePdoxBytes(blobRef, field.fSize);
+                    }
                     break;
                 }
 

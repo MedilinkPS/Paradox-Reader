@@ -14,7 +14,7 @@ namespace ParadoxReader
         private readonly BinaryReader reader;
 
         public ParadoxBlobFile(string fileName)
-            : this(new FileStream(fileName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            : this(new FileStream(fileName, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
         {
         }
 
@@ -96,76 +96,171 @@ namespace ParadoxReader
 
 
         /// <summary>
-        /// TODO: This needs work. We need to pre-set the blobInfo with the correct values before writing.
-        ///  For example size = BitConverter.ToUInt32(blobInfo, len - 10 + 4);
+        /// Overwrites an existing blob slot in the .MB file with <paramref name="blobVal"/>.
+        /// This is a targeted, minimal write:
+        ///  - For same-size data: seeks directly to the data position (offset+hsize) and
+        ///    writes only the payload bytes.  The header is never touched.
+        ///  - For different-size data: additionally patches only the 4-byte checkSize field
+        ///    inside the header via a separate targeted seek.
+        /// Type-3 (sub-block / Graphics) blobs update just the 5-byte blob pointer and data.
         /// </summary>
         internal void WriteBlob(byte[] blobInfo, int len, int hsize, byte[] blobVal)
         {
-
             if (blobVal == null || blobVal.Length == 0)
                 throw new ArgumentException("Blob value cannot be null or empty.");
 
-            try
+            var leader  = len - 10;
+            var newSize = (uint)blobVal.Length;
+            var index   = BitConverter.ToUInt32(blobInfo, leader) & 0x000000ff;
+            var offset  = BitConverter.ToUInt32(blobInfo, leader) & 0xffffff00;
+            var oldSize = BitConverter.ToUInt32(blobInfo, leader + 4);
+
+            // Read only the type byte — the minimal peek needed to choose the write path.
+            this.stream.Position = offset;
+            int typeByte = this.stream.ReadByte();
+
+            if (typeByte == 3)
             {
-                using (var writer = new BinaryWriter(stream))
+                // Paradox type-3 sub-block memo strategy:
+                //   NEVER overwrite in-place. Always allocate a NEW slot (one below the
+                //   current lowest-indexed active slot) and FREE the old slot (zero ptr[0]
+                //   and ptr[2]).  The DB blobInfo slot-index byte is updated to the new slot.
+                //
+                // Slot entry layout (5 bytes):
+                //   [0] dataOffsetMultiplier → data at blockBase + [0]*16
+                //   [1] n  → checkSize = (n-1)*16 + [4]
+                //   [2] global write-sequence counter (unique per-slot, monotonically increasing)
+                //   [3] 0
+                //   [4] remainder
+
+                long slotTableBase = (long)offset + 12;
+
+                // Scan all slots 0..index to find current state.
+                byte maxPtr0     = 0;
+                byte maxPtrSeq   = 0;
+                int  minActiveSlot = (int)index; // start at current slot; will walk down
+                byte[] scanBuf   = new byte[5];
+                for (int si = 0; si <= (int)index; si++)
                 {
-                    var leader = len - 10;
-                    var size = (uint)blobVal.Length; // Size of the blob data to write
-                    var blobsize = size;
-                    if (hsize == 17) // Graphics: account for 8-byte extended header
-                        blobsize = size - 8;
-
-                    // Extract metadata from blobInfo
-                    var index = BitConverter.ToUInt32(blobInfo, leader) & 0x000000ff;
-                    var mod_nr = BitConverter.ToUInt16(blobInfo, leader + 8);
-                    var offset = BitConverter.ToUInt32(blobInfo, leader) & 0xffffff00;
-
-                    // Update blobInfo with size
-                    Buffer.BlockCopy(BitConverter.GetBytes(size), 0, blobInfo, leader + 4, 4);
-
-                    // Set stream position to offset and write header
-                    this.stream.Position = offset;
-                    byte[] head = new byte[20]; // Same size as in ReadBlob
-                    if (hsize == 17) // Graphics (type 3)
+                    long sp = slotTableBase + si * 5;
+                    if (sp + 5 > this.stream.Length) break;
+                    this.stream.Position = sp;
+                    int sr = 0;
+                    while (sr < 5) sr += this.stream.Read(scanBuf, sr, 5 - sr);
+                    if (scanBuf[0] != 0) // active slot
                     {
-                        head[0] = 3; // Type 3
-                        writer.Write(head, 0, 3); // Write first 3 bytes of header
-                        writer.Write(new byte[9]); // Write 9 bytes of header (placeholder, adjust if specific data needed)
-
-                        // Compute blob pointer position
-                        var blobPointerPos = offset + 12 + (index * 5);
-                        this.stream.Position = blobPointerPos;
-
-                        // Create blob pointer: head[0] = multiplier, head[1] = n, head[4] = remainder
-                        // checkSize = ((head[1] - 1) * 16 + head[4]) == size
-                        uint n = size / 16 + 1; // head[1] value
-                        uint remainder = size % 16; // head[4] value
-                        head[0] = 0; // Multiplier (adjust if needed, not specified in ReadBlob)
-                        head[1] = (byte)n;
-                        head[4] = (byte)remainder;
-                        writer.Write(head, 0, 5); // Write 5-byte blob pointer
-
-                        // Write blob data
-                        var blobDataPos = offset + (head[0] * 16);
-                        this.stream.Position = blobDataPos;
-                        writer.Write(blobVal, 0, blobVal.Length);
-                    }
-                    else // Type 2
-                    {
-                        head[0] = 2; // Type 2
-                        writer.Write(head, 0, 3); // Write first 3 bytes of header
-                        Buffer.BlockCopy(BitConverter.GetBytes(size), 0, head, 0, 4); // Encode checkSize
-                        writer.Write(head, 0, hsize - 3); // Write remaining header bytes
-
-                        // TODO: Handle index == 255 if special logic is needed
-                        writer.Write(blobVal, 0, blobVal.Length); // Write blob data
+                        if (si < minActiveSlot) minActiveSlot = si;
+                        if (scanBuf[0] > maxPtr0)   maxPtr0   = scanBuf[0];
+                        if (scanBuf[2] > maxPtrSeq) maxPtrSeq = scanBuf[2];
                     }
                 }
+
+                byte newSeq      = (byte)(maxPtrSeq + 1);
+                byte newPtr0     = (byte)(maxPtr0   + 1);
+                int  newSlotIdx  = minActiveSlot - 1; // next free slot below current lowest
+
+                // Read old slot entry.
+                long oldPtrPos = slotTableBase + (long)index * 5;
+                this.stream.Position = oldPtrPos;
+                byte[] oldPtr = new byte[5];
+                int read = 0;
+                while (read < 5) read += this.stream.Read(oldPtr, read, 5 - read);
+
+                // Size fields may change.
+                byte newN   = oldPtr[1];
+                byte newRem = oldPtr[4];
+                if (newSize != oldSize)
+                {
+                    newN   = (byte)(newSize / 16 + 1);
+                    newRem = (byte)(newSize % 16);
+                    Buffer.BlockCopy(BitConverter.GetBytes(newSize), 0, blobInfo, leader + 4, 4);
+                }
+
+                // Free old slot: zero ptr[0] and ptr[2].
+                oldPtr[0] = 0;
+                oldPtr[2] = 0;
+                this.stream.Position = oldPtrPos;
+                this.stream.Write(oldPtr, 0, 5);
+
+                // Write new slot entry.
+                byte[] newPtr = new byte[] { newPtr0, newN, newSeq, 0, newRem };
+                long newPtrPos = slotTableBase + (long)newSlotIdx * 5;
+                this.stream.Position = newPtrPos;
+                this.stream.Write(newPtr, 0, 5);
+
+                // Update blobInfo: slot-index byte (blobInfo[leader], the low byte of the
+                // packed offset+index uint32) and mod_nr.
+                blobInfo[leader]     = (byte)newSlotIdx;
+                blobInfo[leader + 8] = newSeq;
+                blobInfo[leader + 9] = 0;
+
+                // Write payload at the new data position.
+                this.stream.Position = (long)offset + newPtr0 * 16;
+                this.stream.Write(blobVal, 0, blobVal.Length);
+
+                // Update block header bytes that track allocation state.
+                //
+                // [3] ^= freed slot index  (XOR accumulator — records which slot was freed)
+                // [4]  = freed slot index  (direct copy)
+                // [5]  = (4 * newSeq * newRem - 15 * (2 * newPtr0 + 1)) mod 256
+                // [6]  = new slot's ptr[0] (data block index)
+                // [9]  = newSeq << 2
+                // [10] = (newPtr0 + 1) - hdr[9]
+                // [11] = 1 (block-modified flag)
+                byte hdr5  = (byte)((4 * newSeq * newRem - 15 * (2 * newPtr0 + 1)) & 0xFF);
+                byte hdr9  = (byte)(newSeq << 2);
+                byte hdr10 = (byte)((newPtr0 + 1) - hdr9);
+
+                // Read current [3] so we can XOR into it.
+                this.stream.Position = (long)offset + 3;
+                byte cur3 = (byte)this.stream.ReadByte();
+
+                this.stream.Position = (long)offset + 3;
+                this.stream.WriteByte((byte)(cur3 ^ (byte)index));  // [3] ^= freed slot
+                this.stream.WriteByte((byte)index);                  // [4]  = freed slot
+                this.stream.WriteByte(hdr5);                         // [5]  = derived formula
+                this.stream.WriteByte(newPtr0);                      // [6]  = new ptr[0]
+                this.stream.Position = (long)offset + 9;
+                this.stream.WriteByte(hdr9);   // [9]
+                this.stream.WriteByte(hdr10);  // [10]
+                this.stream.WriteByte(1);      // [11]
             }
-            catch
+            else
             {
-                throw new Exception("Failed to write blob data.");
+                // Type 2 (or any non-3 block): data lives immediately after the hsize-byte
+                // header, i.e. at offset+hsize.  ReadBlob confirms this: after reading
+                // 3 + (hsize-3) = hsize bytes sequentially it reads the data with no
+                // intervening seek.
+                //
+                // We do NOT rewrite the header block — touching those bytes risks
+                // corrupting structural unknowns (offset+1..2 and offset+7..9).
+                // Instead we patch only the 4-byte checkSize field when the size changes,
+                // using a direct targeted seek.
+
+                if (newSize != oldSize)
+                {
+                    // checkSize = file[offset+3..offset+6] (LE uint32).
+                    // Derived from ReadBlob: second Read puts file[offset+3..] into head[0..],
+                    // and checkSize = ToUInt32(head, 0).
+                    byte[] sizeBytes = BitConverter.GetBytes(newSize);
+                    this.stream.Position = (long)offset + 3;
+                    this.stream.Write(sizeBytes, 0, 4);
+                    Buffer.BlockCopy(sizeBytes, 0, blobInfo, leader + 4, 4);
+                }
+
+                // Write the payload — mirrors the exact read position in ReadBlob.
+                this.stream.Position = (long)offset + hsize;
+                this.stream.Write(blobVal, 0, blobVal.Length);
             }
+
+            // Increment the write counter stored in the BAT block at offset 3.
+            // Paradox uses this single-byte counter to detect stale cached blob data.
+            this.stream.Position = 3;
+            int batCounter = this.stream.ReadByte();
+            this.stream.Position = 3;
+            this.stream.WriteByte((byte)((batCounter + 1) & 0xFF));
+
+            this.stream.Flush();
         }
 
 
