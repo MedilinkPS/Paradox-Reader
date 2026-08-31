@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Data.SqlClient;
 using System.Diagnostics;
@@ -80,20 +80,27 @@ namespace ParadoxTest
                             tmpDataValues[i] = value; // Value types and immutable types (like string)
                     }
 
-                    tmpDataValues[0] = 9; // 9;
-                    tmpDataValues[1] = "ZZZ"; // ZZZ
-                    tmpDataValues[2] = -999.99d;
-                    tmpDataValues[3] = 999.99d;
-                    tmpDataValues[4] = (short)-999;
-                    tmpDataValues[5] = 999;
-                    tmpDataValues[6] = -999.99M; // 999.99d;
-                    tmpDataValues[7] = now.Date;
-                    tmpDataValues[8] = now.TimeOfDay;
-                    tmpDataValues[9] = now;
-                    tmpDataValues[10] = false;
-                    tmpDataValues[11] = new byte[] { (byte)9, (byte)9, (byte)9 };
-                    tmpDataValues[12] = new byte[] { (byte)9, (byte)9, (byte)9 };
-                    tmpDataValues[13] = "ZZZ";
+                    // Temporarily commenting out the following lines to avoid overwriting the original data values with test values, so we can just test memo in isolation.
+                    //tmpDataValues[0] = 9; // 9;
+                    //tmpDataValues[1] = "ZZZ"; // ZZZ
+                    //tmpDataValues[2] = -999.99d;
+                    //tmpDataValues[3] = 999.99d;
+                    //tmpDataValues[4] = (short)-999;
+                    //tmpDataValues[5] = 999;
+                    //tmpDataValues[6] = -999.99M; // 999.99d;
+                    //tmpDataValues[7] = now.Date;
+                    //tmpDataValues[8] = now.TimeOfDay;
+                    //tmpDataValues[9] = now;
+                    //tmpDataValues[10] = false;
+                    //tmpDataValues[11] = new byte[] { (byte)9, (byte)9, (byte)9 };
+                    // Temporarily commenting out the above lines to avoid overwriting the original data values with test values, so we can just test memo in isolation.
+
+                    // tmpDataValues[12] is a BLOb reference pointer — must NOT be overwritten with raw bytes
+                    // or it will corrupt the .DB file's blob index. Leave it as the cloned original.
+
+                    // Update the memo field (index 13) to "99", preserving its .MB blob pointer.
+                    var origMemo = tmpDataValues[13] as ParadoxReader.MemoValue;
+                    tmpDataValues[13] = new ParadoxReader.MemoValue("99", origMemo?.BlobInfo);
 
                     Console.WriteLine("Setting Record #{0}", recIndex);
 
