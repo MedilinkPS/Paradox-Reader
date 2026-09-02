@@ -10,6 +10,14 @@ namespace ParadoxReader
 {
     internal class ParadoxBlobFile : IDisposable
     {
+        private struct ActiveSlotInfo
+        {
+            public int Idx;
+            public byte OldPtr0;
+            public byte N;
+            public byte Rem;
+        }
+
         private readonly Stream stream;
         private readonly BinaryReader reader;
 
@@ -55,52 +63,61 @@ namespace ParadoxReader
         /// <summary>
         /// Computes and writes type-3 block header bytes [3]-[10] (the 8 "lane"
         /// bytes that precede the whole-block checksum at [11]). Reverse-engineered
-        /// from SQLRunner/BDE-generated reference captures (sweep of memo lengths
-        /// 1-40, single-character mutation sweeps, and repeated-write determinism
-        /// checks): each lane k (0-7) is the XOR of the blob's own content bytes at
-        /// positions k, k+8, k+16, k+24, k+32 (only positions that exist within the
-        /// blob), with three lanes additionally XORed against fields from the
-        /// blob's own slot entry (ptr0, off1/"n", and lengthmod/remainder):
-        ///   lane 0 (header byte 3)  ^= (3 ^ off1)
-        ///   lane 3 (header byte 6)  ^= lengthmod
-        ///   lane 7 (header byte 10) ^= ptr0
-        /// Verified to match exactly across all 39 tested memo lengths (2-40 bytes).
-        /// Must be called after the slot entry and payload for this blob have been
-        /// written, and before <see cref="WriteType3BlockChecksum"/>.
+        /// from SQLRunner/BDE-generated reference captures covering single-write
+        /// blocks (memo lengths 1-40), multi-write/reallocation blocks (e.g. an
+        /// A10 write followed by a same-block B-length write), and repeated-write
+        /// determinism checks: each lane k (0-7) is simply the XOR of every byte in
+        /// the full 4096-byte block whose offset-within-block modulo 8 equals k,
+        /// excluding the 8 lane bytes themselves ([3]-[10]) but INCLUDING the
+        /// checksum byte [11]. This holds regardless of how many blobs/slots are
+        /// packed into the block, which supersedes the earlier (single-blob-only)
+        /// formula that did not account for multiple active slots sharing a block.
+        /// Must be called after the slot entry/payload for this write AND the
+        /// checksum byte [11] (<see cref="WriteType3BlockChecksum"/>) have already
+        /// been written, since the lanes depend on the checksum byte's value.
         /// </summary>
-        private void WriteType3HeaderLanes(long blockOffset, byte[] blobVal, byte ptr0, byte off1, byte lengthmod)
-        {
-            byte[] lanes = new byte[8];
-            for (int k = 0; k < 8; k++)
-            {
-                byte xorVal = 0;
-                for (int pos = k; pos < blobVal.Length; pos += 8)
-                {
-                    xorVal ^= blobVal[pos];
-                }
-                if (k == 0) xorVal ^= (byte)(3 ^ off1);
-                if (k == 3) xorVal ^= lengthmod;
-                if (k == 7) xorVal ^= ptr0;
-                lanes[k] = xorVal;
-            }
-            this.stream.Position = blockOffset + 3;
-            this.stream.Write(lanes, 0, 8);
-        }
-
-        private void WriteType3BlockChecksum(long blockOffset)
+        private void WriteType3HeaderLanes(long blockOffset)
         {
             byte[] fullBlock = new byte[4096];
             this.stream.Position = blockOffset;
             int totalRead = 0;
             while (totalRead < 4096) totalRead += this.stream.Read(fullBlock, totalRead, 4096 - totalRead);
-            byte checksum = 0;
-            for (int bi = 0; bi < 4096; bi++)
+
+            byte[] lanes = new byte[8];
+            for (int p = 0; p < 4096; p++)
             {
-                if (bi == 11) continue;
-                checksum ^= fullBlock[bi];
+                if (p >= 3 && p <= 10) continue;
+                lanes[p % 8] ^= fullBlock[p];
             }
+            this.stream.Position = blockOffset + 3;
+            this.stream.Write(lanes, 0, 8);
+        }
+
+        /// <summary>
+        /// Computes and writes type-3 block header byte [11]. Reverse-engineered
+        /// from SQLRunner/BDE reference captures: byte [11] is NOT a live
+        /// whole-block XOR checksum (that hypothesis coincidentally matched
+        /// single-write and lowest-slot-only cases). It is instead a monotonic
+        /// "deepest slot reached" high-water mark that never decreases, even
+        /// after the slot that set it is later freed and reused by a shallower
+        /// write:
+        ///   byte[11] = max(byte[11] before this write, 63 - newSlotIdx)
+        /// Verified against A10 (single write, slot 63 -> byte11=0x00), A10->B10
+        /// (slot 62 used next -> byte11=0x01), and A10->B10->C10 (3rd write
+        /// reuses freed slot 63, which alone would give 0x00, but byte11 stays
+        /// at the 0x01 high-water mark set by the 2nd write).
+        /// Must be called after the new slot entry has been written (so the slot
+        /// table reflects newSlotIdx), and before <see cref="WriteType3HeaderLanes"/>,
+        /// since the lane formula includes byte [11] in its XOR groups.
+        /// </summary>
+        private void WriteType3BlockChecksum(long blockOffset, int newSlotIdx)
+        {
             this.stream.Position = blockOffset + 11;
-            this.stream.WriteByte(checksum);
+            byte oldByte11 = (byte)this.stream.ReadByte();
+            byte candidate = (byte)(63 - newSlotIdx);
+            byte newByte11 = candidate > oldByte11 ? candidate : oldByte11;
+            this.stream.Position = blockOffset + 11;
+            this.stream.WriteByte(newByte11);
         }
 
         private ushort IncrementGlobalModCount()
@@ -413,14 +430,13 @@ namespace ParadoxReader
                 Buffer.BlockCopy(BitConverter.GetBytes(newSize), 0, blobInfo, leader + 4, 4);
                 Buffer.BlockCopy(newModNrBytes, 0, blobInfo, leader + 8, 2);
 
-                // Header bytes [3]-[10] are derived from the blob's own content plus
-                // its slot entry fields (see WriteType3HeaderLanes for the formula).
-                WriteType3HeaderLanes(targetBlockOffset, blobVal, targetPtr0, newN, newRem);
+                // [11] must be computed first: a monotonic high-water mark based on
+                // the slot index just used (see WriteType3BlockChecksum for details).
+                WriteType3BlockChecksum(targetBlockOffset, targetSlotIdx);
 
-                // [11] = whole-block XOR checksum (see full explanation at the
-                // overwrite path below). Must be computed last, after the block
-                // header/slot/payload bytes above have all been written.
-                WriteType3BlockChecksum(targetBlockOffset);
+                // Header bytes [3]-[10] are the whole-block lane XOR (see
+                // WriteType3HeaderLanes), which depends on the byte [11] written above.
+                WriteType3HeaderLanes(targetBlockOffset);
 
                 this.stream.Flush();
                 return;
@@ -475,7 +491,6 @@ namespace ParadoxReader
                 //    then REUSED by the 3rd write, rather than a new descending slot being
                 //    allocated below the current lowest active slot.
                 const int slotCount = 64;
-                int  activeUnitSum = 0;
                 int  freeSlotIdx = -1;
                 byte[] scanBuf   = new byte[5];
                 for (int si = slotCount - 1; si >= 0; si--)
@@ -485,18 +500,13 @@ namespace ParadoxReader
                     this.stream.Position = sp;
                     int sr = 0;
                     while (sr < 5) sr += this.stream.Read(scanBuf, sr, 5 - sr);
-                    if (scanBuf[0] != 0) // active slot
-                    {
-                        activeUnitSum += scanBuf[1];
-                    }
-                    else if (freeSlotIdx < 0)
+                    if (scanBuf[0] == 0 && freeSlotIdx < 0)
                     {
                         freeSlotIdx = si;
                     }
                 }
 
                 const byte reallocDataOffsetMultiplier = 21; // (12 + 64*5) rounded up to 16 = 336 = 21*16
-                byte newPtr0     = (byte)(reallocDataOffsetMultiplier + activeUnitSum);
                 int  newSlotIdx  = freeSlotIdx >= 0 ? freeSlotIdx : (int)index;
 
                 // Read old slot entry.
@@ -515,6 +525,58 @@ namespace ParadoxReader
                     newRem = (byte)(newSize % 16);
                     Buffer.BlockCopy(BitConverter.GetBytes(newSize), 0, blobInfo, leader + 4, 4);
                 }
+
+                // Compact the block's data area BEFORE freeing anything: verified
+                // against reference stepwise captures (step1_A10.MB -> step2_B10.MB ->
+                // step3_C10.MB) that on every write, ALL currently active slots
+                // (including the one about to be replaced by this write) are repacked
+                // contiguously starting at the base data offset, in ascending order of
+                // their current data position. This reclaims gaps left by slots freed
+                // on earlier writes (e.g. write 3 physically moves the write-2 blob
+                // down into the dead gap left by the write-1 blob, even though the
+                // write-2 blob's own slot is about to be freed by this very write).
+                // The new blob's position is simply the end of this compacted region
+                // (base + total units of all slots that were active before this write),
+                // which also equals base + sum(active n) from the pre-rewrite formula.
+                var activeSlots = new List<ActiveSlotInfo>();
+                for (int si = 0; si < slotCount; si++)
+                {
+                    long sp = slotTableBase + si * 5;
+                    if (sp + 5 > this.stream.Length) continue;
+                    this.stream.Position = sp;
+                    int sr = 0;
+                    while (sr < 5) sr += this.stream.Read(scanBuf, sr, 5 - sr);
+                    if (scanBuf[0] != 0)
+                    {
+                        activeSlots.Add(new ActiveSlotInfo { Idx = si, OldPtr0 = scanBuf[0], N = scanBuf[1], Rem = scanBuf[4] });
+                    }
+                }
+                activeSlots.Sort((a, b) => a.OldPtr0.CompareTo(b.OldPtr0));
+
+                byte nextPtr0 = reallocDataOffsetMultiplier;
+                foreach (var s in activeSlots)
+                {
+                    int checkSize = (s.N - 1) * 16 + s.Rem;
+                    if (s.OldPtr0 != nextPtr0)
+                    {
+                        byte[] moveBuf = new byte[checkSize];
+                        this.stream.Position = (long)offset + s.OldPtr0 * 16;
+                        int mr = 0;
+                        while (mr < checkSize) mr += this.stream.Read(moveBuf, mr, checkSize - mr);
+                        this.stream.Position = (long)offset + nextPtr0 * 16;
+                        this.stream.Write(moveBuf, 0, checkSize);
+
+                        if (s.Idx != index)
+                        {
+                            this.stream.Position = slotTableBase + s.Idx * 5;
+                            this.stream.WriteByte(nextPtr0);
+                        }
+                    }
+                    int unitsUsed = (checkSize + 15) / 16;
+                    if (unitsUsed == 0) unitsUsed = 1;
+                    nextPtr0 = (byte)(nextPtr0 + unitsUsed);
+                }
+                byte newPtr0 = nextPtr0;
 
                 // Free old slot: zero ptr[0] and modNr (ptr[2..3]).
                 oldPtr[0] = 0;
@@ -543,13 +605,13 @@ namespace ParadoxReader
                 this.stream.Position = (long)offset + newPtr0 * 16;
                 this.stream.Write(blobVal, 0, blobVal.Length);
 
-                // Update block header bytes [3]-[10], derived from the new blob's own
-                // content plus its slot entry fields (see WriteType3HeaderLanes).
-                WriteType3HeaderLanes(offset, blobVal, newPtr0, newN, newRem);
+                // [11] must be computed first: a monotonic high-water mark based on
+                // the slot index just used (see WriteType3BlockChecksum for details).
+                WriteType3BlockChecksum(offset, newSlotIdx);
 
-                // [11] = whole-block XOR checksum. Must be computed last, after all
-                // other header/slot/payload bytes for this write have been written.
-                WriteType3BlockChecksum(offset);
+                // Header bytes [3]-[10] are the whole-block lane XOR (see
+                // WriteType3HeaderLanes), which depends on the byte [11] written above.
+                WriteType3HeaderLanes(offset);
             }
             else
             {
