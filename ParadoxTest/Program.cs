@@ -100,7 +100,7 @@ namespace ParadoxTest
 
                     // Update the memo field (index 13) to "99", preserving its .MB blob pointer.
                     var origMemo = tmpDataValues[13] as ParadoxReader.MemoValue;
-                    tmpDataValues[13] = new ParadoxReader.MemoValue("99", origMemo?.BlobInfo);
+                    tmpDataValues[13] = new ParadoxReader.MemoValue("1111", origMemo?.BlobInfo);
 
                     Console.WriteLine("Setting Record #{0}", recIndex);
 

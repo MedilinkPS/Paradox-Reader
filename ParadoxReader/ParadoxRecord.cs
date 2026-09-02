@@ -180,8 +180,12 @@ namespace ParadoxReader
                 {
                     var blobInfo = r.ReadBytes(field.fSize);
                     var blob     = file.ReadBlob(blobInfo, field.fSize, 10);
-                    if (blob == null) return null;
-                    var text = System.Text.Encoding.Default.GetString(blob);
+                    // Always return a MemoValue carrying blobInfo, even when the memo is
+                    // blank/never-written (blob == null, blobInfo all zero). Returning null
+                    // here loses blobInfo entirely, which then prevents WriteField from ever
+                    // calling WriteBlob on save (it falls back to writing zero bytes and the
+                    // memo is silently never persisted).
+                    var text = blob == null ? string.Empty : System.Text.Encoding.Default.GetString(blob);
                     return new MemoValue(text, blobInfo);
                 }
 

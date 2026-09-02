@@ -62,6 +62,26 @@ namespace ParadoxReader
             else
             {
                 this.BlobFile.WriteBlob(blobInfo, len, hsize, blobVal);
+                EnsureHasBlobFlagSet();
+            }
+        }
+
+        /// <summary>
+        /// BDE sets a flag byte at .DB header offset 0x74 to 0x01 once the table has
+        /// an associated (non-empty) blob/memo file. Files created before any memo
+        /// value was ever written leave this byte 0x00; without it, BDE reports the
+        /// memo/blob file as corrupt even though the data itself is well-formed.
+        /// </summary>
+        private void EnsureHasBlobFlagSet()
+        {
+            const long HasBlobFlagOffset = 0x74;
+            this.stream.Position = HasBlobFlagOffset;
+            int current = this.stream.ReadByte();
+            if (current != 1)
+            {
+                this.stream.Position = HasBlobFlagOffset;
+                this.stream.WriteByte(1);
+                this.stream.Flush();
             }
         }
 
