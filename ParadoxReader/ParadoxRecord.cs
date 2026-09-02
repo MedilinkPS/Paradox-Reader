@@ -179,7 +179,10 @@ namespace ParadoxReader
                 case ParadoxFieldTypes.FmtMemoBLOb:
                 {
                     var blobInfo = r.ReadBytes(field.fSize);
-                    var blob     = file.ReadBlob(blobInfo, field.fSize, 10);
+                    // hsize=9: on-disk type-2 block header is type(1)+numBlocks(2)+
+                    // blobLen(4)+modNr(2)=9 bytes (pxlib's _TMbBlockHeader2). Type-3
+                    // sub-blocks ignore hsize entirely, so this only affects type-2.
+                    var blob     = file.ReadBlob(blobInfo, field.fSize, 9);
                     // Always return a MemoValue carrying blobInfo, even when the memo is
                     // blank/never-written (blob == null, blobInfo all zero). Returning null
                     // here loses blobInfo entirely, which then prevents WriteField from ever
@@ -271,8 +274,9 @@ namespace ParadoxReader
                     if (value is MemoValue mv && mv.BlobInfo != null)
                     {
                         // Encode the new text and overwrite the slot in the .MB file.
+                        // hsize=9: matches ReadField above (on-disk type-2 header size).
                         byte[] encoded = System.Text.Encoding.Default.GetBytes(mv.Text ?? string.Empty);
-                        file.WriteBlob(mv.BlobInfo, field.fSize, 10, encoded);
+                        file.WriteBlob(mv.BlobInfo, field.fSize, 9, encoded);
 
                         int leader = field.fSize - 10;
 

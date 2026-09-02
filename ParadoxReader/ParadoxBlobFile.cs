@@ -306,18 +306,74 @@ namespace ParadoxReader
 
                 if (newSize > maxSingleBlockPayload)
                 {
-                    // The current implementation only ever allocates a single 4096-byte
-                    // type-3 block for a field's first-ever blob write. Real Paradox .MB
-                    // files can span multiple chained blocks (via the numBlocks header
-                    // field) for larger blobs, but that multi-block allocation path is
-                    // not implemented here. Writing blobVal directly into a fixed
-                    // 4096-byte buffer at dataAreaOffset would overflow the buffer, so
-                    // fail fast with a clear, actionable error instead of the confusing
-                    // ArgumentException that would otherwise be thrown from the copy.
-                    throw new NotSupportedException(
-                        $"Blob value of {newSize} bytes exceeds the {maxSingleBlockPayload}-byte capacity " +
-                        "of a single new .MB block. Multi-block blob allocation for first-time writes is not " +
-                        "currently supported by WriteBlob.");
+                    // Blobs too large for a shared type-3 sub-allocated block use the
+                    // type-2 "big blob" format instead: a dedicated, contiguous run of
+                    // one or more 4096-byte blocks holding a single blob, per pxlib's
+                    // _TMbBlockHeader2 layout (fileformat.h):
+                    //   [0]     type        = 2
+                    //   [1..2]  numBlocks   (LE word) - count of contiguous 4096-byte
+                    //                         blocks reserved for this blob, including
+                    //                         the header block itself.
+                    //   [3..6]  blobLen     (LE uint32) - the blob's byte length, mirrors
+                    //                         the checkSize field already read/written by
+                    //                         the existing type-2 read/overwrite paths.
+                    //   [7..8]  modNr       (LE word) - same global modification counter
+                    //                         value used elsewhere.
+                    // Payload data immediately follows the hsize-byte header (hsize=9
+                    // normally, 17 for Graphics), exactly as ReadBlob and the type-2
+                    // overwrite path already assume. Unlike type-3 blocks, type-2 blocks
+                    // are never shared between records, so no slot table is needed and
+                    // "index" is always 0 (the block offset's low byte, since blocks are
+                    // always 4096-aligned).
+                    long totalBytesNeeded = (long)hsize + newSize;
+                    int  numBlocksNeeded  = (int)((totalBytesNeeded + blockSize - 1) / blockSize);
+
+                    long newBlockOffset = this.stream.Length;
+                    if (newBlockOffset % blockSize != 0)
+                    {
+                        newBlockOffset += blockSize - (newBlockOffset % blockSize);
+                    }
+
+                    // Reserve the full contiguous run up front, zero-filled, so the
+                    // stream length reflects the block-aligned allocation even though
+                    // only the header and payload bytes are written below.
+                    long totalAllocSize = (long)numBlocksNeeded * blockSize;
+                    byte[] zeroFill = new byte[totalAllocSize];
+                    this.stream.Position = newBlockOffset;
+                    this.stream.Write(zeroFill, 0, zeroFill.Length);
+
+                    ushort newModNr2 = IncrementGlobalModCount();
+                    byte[] newModNr2Bytes = BitConverter.GetBytes(newModNr2);
+
+                    byte[] blockHeader = new byte[hsize];
+                    blockHeader[0] = 2;
+                    blockHeader[1] = (byte)(numBlocksNeeded & 0xFF);
+                    blockHeader[2] = (byte)((numBlocksNeeded >> 8) & 0xFF);
+                    Buffer.BlockCopy(BitConverter.GetBytes(newSize), 0, blockHeader, 3, 4);
+                    blockHeader[7] = newModNr2Bytes[0];
+                    blockHeader[8] = newModNr2Bytes[1];
+                    // Any remaining header bytes (Graphics' extra 8 bytes at [9..16])
+                    // are left zero-filled as a best-effort default; their exact
+                    // semantics are not derivable from available reference captures.
+
+                    this.stream.Position = newBlockOffset;
+                    this.stream.Write(blockHeader, 0, hsize);
+
+                    this.stream.Position = newBlockOffset + hsize;
+                    this.stream.Write(blobVal, 0, blobVal.Length);
+
+                    // Update blobInfo: packed offset+index. Verified against a real BDE
+                    // reference capture: type-2 (big blob) records always store index=255
+                    // (0xFF) in the low byte, not 0 — BDE reports "BLOB has been modified"
+                    // if this sentinel is missing, even though the block offset itself is
+                    // always 4096-aligned (so the low byte would otherwise read as 0).
+                    uint packedOffsetIndex2 = (uint)newBlockOffset | 0xFFu;
+                    Buffer.BlockCopy(BitConverter.GetBytes(packedOffsetIndex2), 0, blobInfo, leader, 4);
+                    Buffer.BlockCopy(BitConverter.GetBytes(newSize), 0, blobInfo, leader + 4, 4);
+                    Buffer.BlockCopy(newModNr2Bytes, 0, blobInfo, leader + 8, 2);
+
+                    this.stream.Flush();
+                    return;
                 }
 
                 // Real Paradox packs multiple records' first-ever blobs into the SAME
