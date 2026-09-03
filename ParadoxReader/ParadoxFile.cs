@@ -27,7 +27,7 @@ namespace ParadoxReader
         internal int primaryIndexWorkspace;
         internal int unknownPtr1A;
         internal ushort pxRootBlockId;
-        protected byte pxLevelCount;
+        internal byte pxLevelCount;
         public short FieldCount { get; private set; }
         internal short primaryKeyFields;
         internal int encryption1;
@@ -48,7 +48,7 @@ namespace ParadoxReader
         private int cryptInfoStartPtr; //  pointer;
         internal int cryptInfoEndPtr;
         internal byte unknown48;
-        private int autoIncVal; //  longint;
+        internal int autoIncVal; //  longint;
         private byte[] unknown4Dx4E;  //array[$004D..$004E] of byte;
         internal byte indexUpdateRequired;
         internal byte[] unknown50x54;  //array[$0050..$0054] of byte;
@@ -156,7 +156,9 @@ namespace ParadoxReader
             if ((this.FileType == ParadoxFileType.DbFileIndexed ||
                  this.FileType == ParadoxFileType.DbFileNotIndexed ||
                  this.FileType == ParadoxFileType.XnnFileInc ||
-                 this.FileType == ParadoxFileType.XnnFileNonInc) &&
+                 this.FileType == ParadoxFileType.XnnFileNonInc ||
+                 this.FileType == ParadoxFileType.XgnFileInc ||
+                 this.FileType == ParadoxFileType.XgnFileNonInc) &&
                 this.fileVersionID >= 5)
             {
                 this.V4Header = new V4Hdr(r);

@@ -52,14 +52,13 @@
     <Compile Include="ParadoxBlobFile.cs" />
     <Compile Include="ParadoxFieldTypes.cs" />
     <Compile Include="ParadoxFile.cs" />
-    <Compile Include="ParadoxTable.cs" />
     <Compile Include="BlockManager.cs" />
     <Compile Include="DataBlock.cs" />
     <Compile Include="Impl.cs" />
     <Compile Include="Index.cs" />
     <Compile Include="IndexManager.cs" />
     <Compile Include="KeySerializer.cs" />
-    <Compile Include="ParadoxDb.cs" />
+    <Compile Include="ParadoxTableFile.cs" />
     <Compile Include="ParadoxFileLock.cs" />
     <Compile Include="ParadoxRecord.cs" />
     <Compile Include="PrimaryIndex.cs" />

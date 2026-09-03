@@ -79,13 +79,27 @@ namespace ParadoxReader
                 idx.OnDelete(fieldValues);
         }
 
+        /// <summary>
+        /// Mirrors the parent .DB file's changeCount1/changeCount2 bytes into every
+        /// open index file, so BDE does not consider the indexes out of date after
+        /// a write. Must be called after every insert/update/delete, once the .DB
+        /// header's change count has been incremented.
+        /// </summary>
+        public void SyncChangeCount(byte changeCount1, byte changeCount2)
+        {
+            primaryIndex?.SyncChangeCount(changeCount1, changeCount2);
+
+            foreach (var idx in secondaryIndexes)
+                idx.SyncChangeCount(changeCount1, changeCount2);
+        }
+
         // ----------------------------------------------------------------
         // Secondary index discovery
         // ----------------------------------------------------------------
 
         private void DiscoverAndOpenSecondaryIndexes(string dbFilePath)
         {
-            var discovered = SecondaryIndexDiscovery.Discover(dbFilePath, allFields);
+            var discovered = SecondaryIndexDiscovery.Discover(dbFilePath, allFields, primaryKeyFieldCount);
             foreach (var info in discovered)
             {
                 try

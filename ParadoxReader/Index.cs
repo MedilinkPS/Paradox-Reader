@@ -8,9 +8,9 @@ namespace ParadoxReader
 {
     public class ParadoxPrimaryKey : ParadoxFile
     {
-        private readonly ParadoxTable table;
+        private readonly ParadoxFile table;
 
-        public ParadoxPrimaryKey(ParadoxTable table, string filePath)
+        public ParadoxPrimaryKey(ParadoxFile table, string filePath)
             : base(filePath)
         {
             this.table = table;

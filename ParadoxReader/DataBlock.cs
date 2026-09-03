@@ -7,9 +7,14 @@ namespace ParadoxReader
     ///
     /// Block layout on disk:
     ///   Bytes [0..1]  nextBlock   (ushort) — next block number, 0 = none
-    ///   Bytes [2..3]  prevBlock   (ushort) — previous block number
+    ///   Bytes [2..3]  blockNumber (ushort) — this block's own self-identifying
+    ///                                        number (0-based, matches its
+    ///                                        ordinal position in the file)
     ///   Bytes [4..5]  addDataSize (short)  — (recordCount - 1) * recordSize
     ///   Bytes [6..]   record data — recordCount * recordSize bytes
+    ///
+    /// Paradox blocks only chain forward via nextBlock; there is no
+    /// back-pointer, so backward traversal is not possible.
     /// </summary>
     internal class DataBlock
     {
@@ -26,7 +31,6 @@ namespace ParadoxReader
 
         public ushort BlockNumber  { get; set; }
         public ushort NextBlock    { get; set; }
-        public ushort PrevBlock    { get; set; }
 
         /// <summary>
         /// addDataSize = (RecordCount - 1) * RecordSize.
@@ -107,8 +111,8 @@ namespace ParadoxReader
         {
             RawData[0] = (byte)( NextBlock   & 0xFF);
             RawData[1] = (byte)( NextBlock   >> 8);
-            RawData[2] = (byte)( PrevBlock   & 0xFF);
-            RawData[3] = (byte)( PrevBlock   >> 8);
+            RawData[2] = (byte)( BlockNumber & 0xFF);
+            RawData[3] = (byte)( BlockNumber >> 8);
             RawData[4] = (byte)( AddDataSize & 0xFF);
             RawData[5] = (byte)((AddDataSize >> 8) & 0xFF);
         }
@@ -117,7 +121,7 @@ namespace ParadoxReader
         public void ParseHeader()
         {
             NextBlock   = (ushort)(RawData[0] | (RawData[1] << 8));
-            PrevBlock   = (ushort)(RawData[2] | (RawData[3] << 8));
+            BlockNumber = (ushort)(RawData[2] | (RawData[3] << 8));
             AddDataSize = (short) (RawData[4] | (RawData[5] << 8));
         }
     }

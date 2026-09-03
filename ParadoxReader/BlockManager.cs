@@ -52,7 +52,7 @@ namespace ParadoxReader
         // ----------------------------------------------------------------
 
         /// <summary>
-        /// Reads a block from disk by 1-based block number.
+        /// Reads a block from disk by 0-based block number.
         /// </summary>
         public DataBlock ReadBlock(ushort blockNumber)
         {
@@ -80,21 +80,18 @@ namespace ParadoxReader
         /// <summary>
         /// Allocates a new block at the end of the file.
         /// The caller is responsible for linking it into the block chain
+        /// (via NextBlock only \u2014 Paradox blocks have no back-pointer)
         /// and updating the file header.
         /// </summary>
-        /// <param name="prevBlockNumber">
-        /// The current last block number (0 if the table is empty).
-        /// </param>
-        public DataBlock AllocateBlock(ushort prevBlockNumber)
+        public DataBlock AllocateBlock()
         {
             long dataArea      = stream.Length - headerSize;
-            ushort newBlockNum = (ushort)((dataArea / fullBlockSize) + 1);
+            ushort newBlockNum = (ushort)(dataArea / fullBlockSize); // 0-based
 
             // Extend the file to accommodate the new block
-            stream.SetLength(headerSize + (newBlockNum * (long)fullBlockSize));
+            stream.SetLength(headerSize + ((newBlockNum + 1) * (long)fullBlockSize));
 
             var block = new DataBlock(newBlockNum, recordSize, blockDataSize);
-            block.PrevBlock   = prevBlockNumber;
             block.NextBlock   = 0;
             block.RecordCount = 0;
 
@@ -108,9 +105,9 @@ namespace ParadoxReader
         // ----------------------------------------------------------------
 
         /// <summary>
-        /// Returns the byte position in the stream for a 1-based block number.
+        /// Returns the byte position in the stream for a 0-based block number.
         /// </summary>
         private long BlockPosition(ushort blockNumber)
-            => headerSize + ((blockNumber - 1) * (long)fullBlockSize);
+            => headerSize + (blockNumber * (long)fullBlockSize);
     }
 }

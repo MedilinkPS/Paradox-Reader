@@ -1,13 +1,11 @@
 ﻿
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 18
-VisualStudioVersion = 18.9.12120.119 stable
+VisualStudioVersion = 18.9.12120.119
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ParadoxReader", "ParadoxReader\ParadoxReader.csproj", "{8D3ADF35-FE64-4BA5-A3BC-955B912ADA9B}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ParadoxTest", "ParadoxTest\ParadoxTest.csproj", "{80E60007-4779-425C-9BA1-8B61AFA3BE75}"
-EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "pxlibcpp", "..\Users\peria\Documents\GitHub\pxlibcpp\pxlibcpp.vcxproj", "{860CA029-B6D5-4529-86B0-494BA992B71A}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -42,21 +40,12 @@ Global
 		{80E60007-4779-425C-9BA1-8B61AFA3BE75}.Release|x64.Build.0 = Release|Any CPU
 		{80E60007-4779-425C-9BA1-8B61AFA3BE75}.Release|x86.ActiveCfg = Release|Any CPU
 		{80E60007-4779-425C-9BA1-8B61AFA3BE75}.Release|x86.Build.0 = Release|Any CPU
-		{860CA029-B6D5-4529-86B0-494BA992B71A}.Debug|Any CPU.ActiveCfg = Debug|x64
-		{860CA029-B6D5-4529-86B0-494BA992B71A}.Debug|Any CPU.Build.0 = Debug|x64
-		{860CA029-B6D5-4529-86B0-494BA992B71A}.Debug|x64.ActiveCfg = Debug|x64
-		{860CA029-B6D5-4529-86B0-494BA992B71A}.Debug|x64.Build.0 = Debug|x64
-		{860CA029-B6D5-4529-86B0-494BA992B71A}.Debug|x86.ActiveCfg = Debug|Win32
-		{860CA029-B6D5-4529-86B0-494BA992B71A}.Debug|x86.Build.0 = Debug|Win32
-		{860CA029-B6D5-4529-86B0-494BA992B71A}.Release|Any CPU.ActiveCfg = Release|x64
-		{860CA029-B6D5-4529-86B0-494BA992B71A}.Release|Any CPU.Build.0 = Release|x64
-		{860CA029-B6D5-4529-86B0-494BA992B71A}.Release|x64.ActiveCfg = Release|x64
-		{860CA029-B6D5-4529-86B0-494BA992B71A}.Release|x64.Build.0 = Release|x64
-		{860CA029-B6D5-4529-86B0-494BA992B71A}.Release|x86.ActiveCfg = Release|Win32
-		{860CA029-B6D5-4529-86B0-494BA992B71A}.Release|x86.Build.0 = Release|Win32
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {15B74835-CF0C-4D20-AB44-A50217C491EF}
 	EndGlobalSection
 	GlobalSection(SubversionScc) = preSolution
 		Svn-Managed = True

@@ -79,6 +79,19 @@ namespace ParadoxReader
             BTreeDelete(keyData);
         }
 
+        /// <summary>
+        /// Previously mirrored the parent .DB file's changeCount1/changeCount2 bytes
+        /// (offset 0x2D) into this .PX file. Disproven by direct experiment: a known-good
+        /// SQLRunner-generated ground-truth table has changeCount = 00,00 in its .PX while
+        /// the .DB has a nonzero value, and Pdxrbld reports it as "no errors found". Forcing
+        /// the .PX changeCount to match the .DB's did NOT resolve "Index version does not
+        /// match table version" in a standalone repro. So this is a no-op again.
+        /// </summary>
+        public void SyncChangeCount(byte changeCount1, byte changeCount2)
+        {
+            // Intentionally no-op; see summary above.
+        }
+
         // ----------------------------------------------------------------
         // B-Tree: Insert
         // ----------------------------------------------------------------
@@ -88,6 +101,22 @@ namespace ParadoxReader
             System.Diagnostics.Debug.WriteLine(
                 $"[PrimaryIndex.BTreeInsert] rootBlock={pxFile.pxRootBlockId}, " +
                 $"key={BitConverter.ToString(entry.KeyData)}");
+
+            // A brand-new table has no data blocks yet, even though the header's
+            // indexRoot field may already point at block 1 as a placeholder. In
+            // that case there is nothing to read; allocate the first (leaf) block
+            // as the root. Use the actual stream length (not the header's cached
+            // fileBlocks, which we don't keep in sync) to detect this.
+            if (pxFile.stream.Length <= pxFile.headerSize)
+            {
+                var newLeaf = AllocateBlock();
+                newLeaf.Entries.Add(entry);
+                WriteBlock(newLeaf);
+                UpdateRootBlockId(newLeaf.BlockNumber);
+                UpdateLevelCount(1);
+                return;
+            }
+
             var root = ReadBlock(pxFile.pxRootBlockId);
             if (root.IsFull(entrySize))
             {
@@ -97,6 +126,7 @@ namespace ParadoxReader
                 InsertNonFull(newRoot, entry);
                 WriteBlock(newRoot);
                 UpdateRootBlockId(newRoot.BlockNumber);
+                UpdateLevelCount((byte)(pxFile.pxLevelCount + 1));
             }
             else
             {
@@ -159,12 +189,18 @@ namespace ParadoxReader
             System.Diagnostics.Debug.WriteLine(
                 $"[PrimaryIndex.BTreeDelete] rootBlock={pxFile.pxRootBlockId}, " +
                 $"key={BitConverter.ToString(keyData)}");
+
+            if (pxFile.stream.Length <= pxFile.headerSize)
+                return; // Nothing to delete from an empty tree.
+
             var root = ReadBlock(pxFile.pxRootBlockId);
             DeleteFromNode(root, keyData);
             if (root.Entries.Count == 0 && !root.IsLeaf)
             {
                 UpdateRootBlockId(root.LeftChildBlockNumber);
                 FreeBlock(root.BlockNumber);
+                if (pxFile.pxLevelCount > 0)
+                    UpdateLevelCount((byte)(pxFile.pxLevelCount - 1));
             }
         }
 
@@ -273,6 +309,34 @@ namespace ParadoxReader
             System.Diagnostics.Debug.WriteLine(
                 $"[PrimaryIndex.AllocateBlock] Allocated block {n} at " +
                 $"offset={pxFile.headerSize + (long)(n - 1) * blockSize}, newStreamLength={pxFile.stream.Length}");
+
+            // Keep the .PX file's own block-chain bookkeeping fields (nextBlock,
+            // fileBlocks, firstBlock, lastBlock @ 0xA-0x11) in sync with the
+            // actual number of allocated blocks. BDE/Pdxrbld considers the index
+            // out of date/corrupt if these aren't updated.
+            if (n == 1) pxFile.firstBlock = n;
+            pxFile.nextBlock  = n;
+            pxFile.lastBlock  = n;
+            pxFile.fileBlocks = n;
+            pxFile.stream.Position = 0xA;
+            using (var w = new BinaryWriter(pxFile.stream, Encoding.Default, leaveOpen: true))
+            {
+                w.Write(pxFile.nextBlock);
+                w.Write(pxFile.fileBlocks);
+                w.Write(pxFile.firstBlock);
+                w.Write(pxFile.lastBlock);
+            }
+
+            // maxBlocks (word @ 0x3A) tracks allocated capacity; BDE/Pdxrbld flags
+            // the index as corrupt if the actual block count ever exceeds it.
+            if (n > pxFile.maxBlocks)
+            {
+                pxFile.maxBlocks = n;
+                pxFile.stream.Position = 0x3A;
+                using (var w = new BinaryWriter(pxFile.stream, Encoding.Default, leaveOpen: true))
+                    w.Write(pxFile.maxBlocks);
+            }
+
             return new PxBlock { BlockNumber = n, Capacity = blockCapacity };
         }
 
@@ -291,6 +355,19 @@ namespace ParadoxReader
             pxFile.stream.Position = 0x1E;
             using (var w = new BinaryWriter(pxFile.stream, Encoding.Default, leaveOpen: true))
                 w.Write(newRootId);
+        }
+
+        /// <summary>
+        /// Keeps numIndexLevels (@ 0x20) in sync with the actual B-tree depth.
+        /// BDE/Pdxrbld considers the index out of date/corrupt if this isn't
+        /// updated when the tree grows or shrinks.
+        /// </summary>
+        private void UpdateLevelCount(byte levelCount)
+        {
+            pxFile.pxLevelCount = levelCount;
+            pxFile.stream.Position = 0x20;
+            using (var w = new BinaryWriter(pxFile.stream, Encoding.Default, leaveOpen: true))
+                w.Write(pxFile.pxLevelCount);
         }
 
         // ----------------------------------------------------------------
