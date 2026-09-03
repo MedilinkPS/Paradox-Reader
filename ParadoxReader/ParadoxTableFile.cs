@@ -185,7 +185,7 @@ namespace ParadoxReader
                 RecordCount++;
                 WriteRecordCountToHeader();
 
-                indexManager.OnInsert(fieldValues, block.BlockNumber, recIdx);
+                NotifyBlockChanged(block);
                 IncrementChangeCount();
 
                 return new ParadoxRecord(block.BlockNumber, recIdx, fieldValues);
@@ -222,7 +222,7 @@ namespace ParadoxReader
                 RecordCount++;
                 WriteRecordCountToHeader();
 
-                indexManager.OnInsert(fieldValues, block.BlockNumber, recIdx);
+                NotifyBlockChanged(block);
                 IncrementChangeCount();
 
                 return new ParadoxRecord(block.BlockNumber, recIdx, fieldValues);
@@ -230,7 +230,7 @@ namespace ParadoxReader
         }
 
         /// <summary>
-        /// Finds any AutoInc field(s), assigns the next value (current
+        /// Finds any AutoInc field(s)
         /// autoIncVal + 1) into fieldValues, and persists the new
         /// autoIncVal back to the file header.
         /// </summary>
@@ -280,10 +280,7 @@ namespace ParadoxReader
                 block.SetRecordBytes(existing.RecordIndex, recordBytes);
                 blockManager.WriteBlock(block);
 
-                indexManager.OnUpdate(
-                    existing.DataValues, newFieldValues,
-                    existing.BlockNumber, existing.RecordIndex);
-
+                NotifyBlockChanged(block);
                 IncrementChangeCount();
 
                 // Refresh cached values on the record object
@@ -316,7 +313,7 @@ namespace ParadoxReader
                 RecordCount--;
                 WriteRecordCountToHeader();
 
-                indexManager.OnDelete(record.DataValues);
+                NotifyBlockChanged(block);
                 IncrementChangeCount();
             }
         }
@@ -331,6 +328,22 @@ namespace ParadoxReader
             if (bytes.Length != RecordSize)
                 Array.Resize(ref bytes, RecordSize);
             return bytes;
+        }
+
+        /// <summary>
+        /// Notifies the index manager that a .DB data block's contents have
+        /// changed. Paradox leaf index entries are per-DB-BLOCK, not per-row
+        /// (see PrimaryIndex/SecondaryIndex remarks), so index maintenance
+        /// only needs the block's current first-row field values and record
+        /// count — not the specific row that changed.
+        /// </summary>
+        private void NotifyBlockChanged(DbBlock block)
+        {
+            object[] firstRowValues = block.RecordCount > 0
+                ? ParadoxRecord.DeserializeRecordBytes(block.GetRecordBytes(0), this)
+                : null;
+
+            indexManager.OnBlockChanged(firstRowValues, block.BlockNumber, block.RecordCount);
         }
 
         // ----------------------------------------------------------------

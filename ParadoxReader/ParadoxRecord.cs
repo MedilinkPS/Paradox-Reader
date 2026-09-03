@@ -103,11 +103,12 @@ namespace ParadoxReader
             {
                 using (var idxMgr = new IndexManager(dbPath, file.FieldTypes, pkCount))
                 {
-                    idxMgr.OnUpdate(
-                        originalDataValues,
-                        DataValues,
-                        BlockNumber,
-                        RecordIndex);
+                    // Paradox leaf index entries are per-DB-BLOCK, not per-row (see
+                    // PrimaryIndex/SecondaryIndex remarks): index maintenance only
+                    // needs the block's current first-row field values and record
+                    // count, not the specific row that changed.
+                    object[] firstRowValues = block.RecordCount > 0 ? block[0].DataValues : null;
+                    idxMgr.OnBlockChanged(firstRowValues, BlockNumber, block.RecordCount);
                 }
             }
             catch (Exception ex)
@@ -129,6 +130,26 @@ namespace ParadoxReader
             int offset     = recIndex * file.RecordSize;
 
             using (var ms = new MemoryStream(block.data, offset, file.RecordSize, writable: false))
+            using (var r  = new BinaryReader(ms))
+            {
+                var values = new object[fieldTypes.Length];
+                for (int i = 0; i < fieldTypes.Length; i++)
+                    values[i] = ReadField(r, file, fieldTypes[i]);
+                return values;
+            }
+        }
+
+        /// <summary>
+        /// Deserializes raw record bytes (as stored in a .DB data block) back
+        /// into field values, using the same per-field decoding as the
+        /// in-memory read path. Used by <see cref="ParadoxTableFile"/> to
+        /// determine a block's first-row key values after an insert/update/
+        /// delete, which Paradox's per-DB-block leaf index entries require.
+        /// </summary>
+        internal static object[] DeserializeRecordBytes(byte[] recordBytes, ParadoxFile file)
+        {
+            var fieldTypes = file.FieldTypes;
+            using (var ms = new MemoryStream(recordBytes, 0, recordBytes.Length, writable: false))
             using (var r  = new BinaryReader(ms))
             {
                 var values = new object[fieldTypes.Length];

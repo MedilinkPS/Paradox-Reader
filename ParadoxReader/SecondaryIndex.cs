@@ -9,6 +9,16 @@ namespace ParadoxReader
     /// Manages a single secondary index file (.Xnn or .Xgn) for a Paradox table.
     /// Uses the same B-tree algorithm as PrimaryIndex but indexes
     /// non-primary-key fields, identified by their position in the parent table.
+    ///
+    /// IMPORTANT: Empirically decoded via SQLRunner byte-level comparison
+    /// (see project history), Paradox leaf entries are per-DB-BLOCK, not
+    /// per-row. Each leaf entry stores the key of the FIRST row currently
+    /// in a given .DB data block, plus a 6-byte pointer:
+    /// blockNumber(ushort) + recordCount(ushort) + reserved(ushort), each
+    /// sign-flip encoded (value ^ 0x8000) and written big-endian (same
+    /// encoding KeySerializer uses for Short fields). The block header is
+    /// 6 bytes: leftChildBlockNumber(ushort) + reserved(ushort) +
+    /// usedBytes(ushort), where usedBytes = (entryCount - 1) * entrySize.
     /// </summary>
     internal class SecondaryIndex : IDisposable
     {
@@ -16,8 +26,8 @@ namespace ParadoxReader
         // Constants
         // ----------------------------------------------------------------
 
-        private const int POINTER_SIZE        = 4;
-        private const int LEFT_CHILD_PTR_SIZE = 4;
+        private const int POINTER_SIZE = 6; // blockNumber(2) + recordCount(2) + reserved(2)
+        private const int HEADER_SIZE  = 6; // leftChild(2) + reserved(2) + usedBytes(2)
 
         // ----------------------------------------------------------------
         // Fields
@@ -46,7 +56,7 @@ namespace ParadoxReader
 
             entrySize     = keyDataSize + POINTER_SIZE;
             indexFile     = new ParadoxFile(indexFilePath);
-            blockCapacity = indexFile.maxTableSize * 0x400 - LEFT_CHILD_PTR_SIZE;
+            blockCapacity = indexFile.maxTableSize * 0x400 - HEADER_SIZE;
             blockBase     = (indexFile.FileType == ParadoxFileType.XgnFileNonInc ||
                              indexFile.FileType == ParadoxFileType.XgnFileInc) ? (ushort)0 : (ushort)1;
 
@@ -64,28 +74,56 @@ namespace ParadoxReader
         // Public API
         // ----------------------------------------------------------------
 
-        public void OnInsert(object[] allFieldValues, ushort blockNumber, ushort recordIndex)
+        /// <summary>
+        /// Called whenever a .DB data block's contents change (a record was
+        /// inserted, updated, or deleted in that block). This is the ONLY
+        /// entry point index maintenance needs, because Paradox leaf entries
+        /// track the whole block, not individual rows: given the current key
+        /// of the block's first row (using this index's own fields) and its
+        /// current record count, the correct leaf entry can always be derived.
+        /// </summary>
+        /// <param name="firstRowAllFieldValues">
+        /// All field values of the record at index 0 in the block, or null
+        /// if the block is now empty (recordCount == 0).
+        /// </param>
+        /// <param name="blockNumber">The affected .DB block number.</param>
+        /// <param name="recordCount">The block's current record count.</param>
+        public void OnBlockChanged(object[] firstRowAllFieldValues, ushort blockNumber, int recordCount)
         {
-            byte[] keyData = KeySerializer.Serialize(
-                ExtractIndexValues(allFieldValues), indexedFields);
-            BTreeInsert(new PxEntry(keyData, blockNumber, recordIndex));
-        }
+            System.Diagnostics.Debug.WriteLine(
+                $"[SecondaryIndex.OnBlockChanged] blockNumber={blockNumber}, recordCount={recordCount}");
 
-        public void OnUpdate(object[] oldAll, object[] newAll,
-                             ushort blockNumber, ushort recordIndex)
-        {
-            byte[] oldKey = KeySerializer.Serialize(ExtractIndexValues(oldAll), indexedFields);
-            byte[] newKey = KeySerializer.Serialize(ExtractIndexValues(newAll), indexedFields);
-            if (KeySerializer.Compare(oldKey, newKey, indexedFields) == 0) return;
-            BTreeDelete(oldKey);
-            BTreeInsert(new PxEntry(newKey, blockNumber, recordIndex));
-        }
+            if (recordCount <= 0)
+            {
+                RemoveBlockEntry(blockNumber);
+                return;
+            }
 
-        public void OnDelete(object[] allFieldValues)
-        {
-            byte[] keyData = KeySerializer.Serialize(
-                ExtractIndexValues(allFieldValues), indexedFields);
-            BTreeDelete(keyData);
+            byte[] keyData = KeySerializer.Serialize(ExtractIndexValues(firstRowAllFieldValues), indexedFields);
+
+            if (indexFile.stream.Length <= indexFile.headerSize)
+            {
+                var newLeaf = AllocateBlock();
+                newLeaf.Entries.Add(new PxEntry(keyData, blockNumber, (ushort)recordCount));
+                WriteBlock(newLeaf);
+                UpdateRootBlockId(newLeaf.BlockNumber);
+                UpdateLevelCount(1);
+                UpdateRecordCount(indexFile.RecordCount + 1);
+                return;
+            }
+
+            var existing = FindEntryForBlock(blockNumber);
+            if (existing.Block != null)
+            {
+                var entry = existing.Block.Entries[existing.Index];
+                entry.KeyData     = keyData;
+                entry.RecordCount = (ushort)recordCount;
+                WriteBlock(existing.Block);
+                return;
+            }
+
+            BTreeInsert(new PxEntry(keyData, blockNumber, (ushort)recordCount));
+            UpdateRecordCount(indexFile.RecordCount + 1);
         }
 
         /// <summary>
@@ -157,7 +195,56 @@ namespace ParadoxReader
         }
 
         // ----------------------------------------------------------------
-        // B-Tree: Insert
+        // Block-number lookup (leaf entries only represent .DB blocks)
+        // ----------------------------------------------------------------
+
+        private class FoundEntry
+        {
+            public PxBlock Block;
+            public int Index;
+        }
+
+        private FoundEntry FindEntryForBlock(ushort blockNumber)
+        {
+            if (indexFile.stream.Length <= indexFile.headerSize) return new FoundEntry { Block = null, Index = -1 };
+            return FindEntryForBlockRecursive(ReadBlock(indexFile.pxRootBlockId), blockNumber);
+        }
+
+        private FoundEntry FindEntryForBlockRecursive(PxBlock node, ushort blockNumber)
+        {
+            if (node.IsLeaf)
+            {
+                for (int i = 0; i < node.Entries.Count; i++)
+                    if (node.Entries[i].BlockNumber == blockNumber)
+                        return new FoundEntry { Block = node, Index = i };
+                return new FoundEntry { Block = null, Index = -1 };
+            }
+
+            if (node.LeftChildBlockNumber != 0)
+            {
+                var r = FindEntryForBlockRecursive(ReadBlock(node.LeftChildBlockNumber), blockNumber);
+                if (r.Block != null) return r;
+            }
+            foreach (var e in node.Entries)
+            {
+                var r = FindEntryForBlockRecursive(ReadBlock(e.BlockNumber), blockNumber);
+                if (r.Block != null) return r;
+            }
+            return new FoundEntry { Block = null, Index = -1 };
+        }
+
+        private void RemoveBlockEntry(ushort blockNumber)
+        {
+            var found = FindEntryForBlock(blockNumber);
+            if (found.Block == null) return;
+            byte[] key = found.Block.Entries[found.Index].KeyData;
+            BTreeDelete(key);
+        }
+
+        // ----------------------------------------------------------------
+        // B-Tree: Insert (used only when a brand-new .DB block needs its
+        // own leaf entry; existing-block record-count/key updates are
+        // handled directly in OnBlockChanged without tree restructuring)
         // ----------------------------------------------------------------
 
         private void BTreeInsert(PxEntry entry)
@@ -165,22 +252,6 @@ namespace ParadoxReader
             System.Diagnostics.Debug.WriteLine(
                 $"[SecondaryIndex.BTreeInsert] rootBlock={indexFile.pxRootBlockId}, " +
                 $"key={BitConverter.ToString(entry.KeyData)}");
-
-            // A brand-new index file has no data blocks yet, even though the header's
-            // indexRoot field may already point at block 1 as a placeholder. In that
-            // case there is nothing to read; allocate the first (leaf) block as the
-            // root. Use the actual stream length (not the header's cached fileBlocks,
-            // which we don't keep in sync) to detect this.
-            if (indexFile.stream.Length <= indexFile.headerSize)
-            {
-                var newLeaf = AllocateBlock();
-                newLeaf.Entries.Add(entry);
-                WriteBlock(newLeaf);
-                UpdateRootBlockId(newLeaf.BlockNumber);
-                UpdateLevelCount(1);
-                UpdateRecordCount(indexFile.RecordCount + 1);
-                return;
-            }
 
             var root = ReadBlock(indexFile.pxRootBlockId);
             if (root.IsFull(entrySize))
@@ -197,7 +268,6 @@ namespace ParadoxReader
             {
                 InsertNonFull(root, entry);
             }
-            UpdateRecordCount(indexFile.RecordCount + 1);
         }
 
         private void InsertNonFull(PxBlock node, PxEntry entry)
@@ -219,13 +289,14 @@ namespace ParadoxReader
                 while (i >= 0 && CompareKeys(entry.KeyData, node.Entries[i].KeyData) < 0)
                     i--;
                 i++;
-                var child = ReadBlock(node.Entries[i].BlockNumber);
+                var child = ReadBlock(i < node.Entries.Count ? node.Entries[i].BlockNumber : node.LeftChildBlockNumber);
                 if (child.IsFull(entrySize))
                 {
                     SplitChild(node, i, child);
                     if (CompareKeys(entry.KeyData, node.Entries[i].KeyData) > 0) i++;
                 }
-                InsertNonFull(ReadBlock(node.Entries[i].BlockNumber), entry);
+                var target = i < node.Entries.Count ? node.Entries[i].BlockNumber : node.LeftChildBlockNumber;
+                InsertNonFull(ReadBlock(target), entry);
             }
         }
 
@@ -247,7 +318,8 @@ namespace ParadoxReader
         }
 
         // ----------------------------------------------------------------
-        // B-Tree: Delete
+        // B-Tree: Delete (used only when a .DB block's last record is
+        // removed, so its leaf entry must be removed entirely)
         // ----------------------------------------------------------------
 
         private void BTreeDelete(byte[] keyData)
@@ -319,15 +391,17 @@ namespace ParadoxReader
             using (var r = new BinaryReader(indexFile.stream, Encoding.Default, leaveOpen: true))
             {
                 block.LeftChildBlockNumber = r.ReadUInt16();
-                r.ReadUInt16();
-                int bytesRead = LEFT_CHILD_PTR_SIZE;
+                r.ReadUInt16(); // reserved
+                r.ReadUInt16(); // usedBytes (derived from Entries at write time; not needed on read)
+                int bytesRead = HEADER_SIZE;
                 while (bytesRead + entrySize <= blockCapacity)
                 {
                     byte[] key = r.ReadBytes(keyDataSize);
                     if (IsEmptyKey(key)) break;
-                    ushort bn = r.ReadUInt16();
-                    ushort ro = r.ReadUInt16();
-                    block.Entries.Add(new PxEntry(key, bn, ro));
+                    ushort bn = ReadSignFlippedUInt16(r);
+                    ushort rc = ReadSignFlippedUInt16(r);
+                    r.ReadBytes(2); // reserved word
+                    block.Entries.Add(new PxEntry(key, bn, rc));
                     bytesRead += entrySize;
                 }
             }
@@ -341,15 +415,21 @@ namespace ParadoxReader
             indexFile.stream.Position = pos;
             using (var w = new BinaryWriter(indexFile.stream, Encoding.Default, leaveOpen: true))
             {
+                ushort usedBytes = block.Entries.Count <= 1
+                    ? (ushort)0
+                    : (ushort)((block.Entries.Count - 1) * entrySize);
+
                 w.Write(block.LeftChildBlockNumber);
-                w.Write((ushort)0);
+                w.Write((ushort)0); // reserved
+                w.Write(usedBytes);
                 foreach (var e in block.Entries)
                 {
                     w.Write(e.KeyData);
-                    w.Write(e.BlockNumber);
-                    w.Write(e.RecordOffset);
+                    WriteSignFlippedUInt16(w, e.BlockNumber);
+                    WriteSignFlippedUInt16(w, e.RecordCount);
+                    WriteSignFlippedUInt16(w, 0); // reserved word, sign-flipped 0 => 0x8000
                 }
-                int used = LEFT_CHILD_PTR_SIZE + block.UsedSize;
+                int used = HEADER_SIZE + block.UsedSize;
                 int rem = blockSize - used;
                 if (rem > 0) w.Write(new byte[rem]);
             }
@@ -428,9 +508,9 @@ namespace ParadoxReader
 
         /// <summary>
         /// Keeps this index file's own RecordCount header field (@ 0x06, int32)
-        /// in sync with the number of keys stored in the index. BDE/Pdxrbld
-        /// considers the index out of date/corrupt if this doesn't match the
-        /// actual number of B-tree entries.
+        /// in sync with the number of leaf entries (one per .DB block) stored
+        /// in the index. BDE/Pdxrbld considers the index out of date/corrupt
+        /// if this doesn't match the actual number of leaf entries.
         /// </summary>
         private void UpdateRecordCount(int recordCount)
         {
@@ -459,6 +539,21 @@ namespace ParadoxReader
         {
             foreach (var b in key) if (b != 0) return false;
             return true;
+        }
+
+        private static ushort ReadSignFlippedUInt16(BinaryReader r)
+        {
+            byte hi = r.ReadByte();
+            byte lo = r.ReadByte();
+            ushort encoded = (ushort)((hi << 8) | lo);
+            return PxEntry.FlipWord(encoded);
+        }
+
+        private static void WriteSignFlippedUInt16(BinaryWriter w, ushort value)
+        {
+            ushort encoded = PxEntry.FlipWord(value);
+            w.Write((byte)(encoded >> 8));
+            w.Write((byte)(encoded & 0xFF));
         }
 
         // ----------------------------------------------------------------

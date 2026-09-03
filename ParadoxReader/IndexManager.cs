@@ -48,35 +48,30 @@ namespace ParadoxReader
         // Public API
         // ----------------------------------------------------------------
 
-        public void OnInsert(object[] fieldValues, ushort blockNumber, ushort recordIndex)
+        /// <summary>
+        /// Notifies all index files that a .DB data block's contents have
+        /// changed (a record was inserted, updated, or deleted within it).
+        /// Paradox leaf index entries are per-DB-BLOCK, not per-row: each
+        /// leaf entry stores the key of the block's first row plus the
+        /// block's current record count. So the only information index
+        /// maintenance ever needs is the block's current first-row values
+        /// and its current record count; this must be called after every
+        /// insert/update/delete that changes a block's contents.
+        /// </summary>
+        /// <param name="firstRowFieldValues">
+        /// All field values of the record now at index 0 in the block, or
+        /// null if the block is now empty (recordCount == 0).
+        /// </param>
+        /// <param name="blockNumber">The affected .DB block number.</param>
+        /// <param name="recordCount">The block's current record count.</param>
+        public void OnBlockChanged(object[] firstRowFieldValues, ushort blockNumber, int recordCount)
         {
-            primaryIndex?.OnInsert(
-                GetKeyValues(fieldValues, 0, primaryKeyFieldCount),
-                blockNumber, recordIndex);
+            primaryIndex?.OnBlockChanged(
+                GetKeyValues(firstRowFieldValues, 0, primaryKeyFieldCount),
+                blockNumber, recordCount);
 
             foreach (var idx in secondaryIndexes)
-                idx.OnInsert(fieldValues, blockNumber, recordIndex);
-        }
-
-        public void OnUpdate(object[] oldValues, object[] newValues,
-                             ushort blockNumber, ushort recordIndex)
-        {
-            primaryIndex?.OnUpdate(
-                GetKeyValues(oldValues, 0, primaryKeyFieldCount),
-                GetKeyValues(newValues, 0, primaryKeyFieldCount),
-                blockNumber, recordIndex);
-
-            foreach (var idx in secondaryIndexes)
-                idx.OnUpdate(oldValues, newValues, blockNumber, recordIndex);
-        }
-
-        public void OnDelete(object[] fieldValues)
-        {
-            primaryIndex?.OnDelete(
-                GetKeyValues(fieldValues, 0, primaryKeyFieldCount));
-
-            foreach (var idx in secondaryIndexes)
-                idx.OnDelete(fieldValues);
+                idx.OnBlockChanged(firstRowFieldValues, blockNumber, recordCount);
         }
 
         /// <summary>
