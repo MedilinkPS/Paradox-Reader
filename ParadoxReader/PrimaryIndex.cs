@@ -92,6 +92,52 @@ namespace ParadoxReader
             // Intentionally no-op; see summary above.
         }
 
+        /// <summary>
+        /// Mirrors the parent .DB file's autoIncVal (offset 0x49) into this
+        /// .PX file. BDE/Pdxrbld considers the index out of date if this
+        /// doesn't match the table's autoIncVal after an AutoInc field is
+        /// assigned.
+        /// </summary>
+        public void SyncAutoIncVal(int autoIncVal)
+        {
+            pxFile.autoIncVal = autoIncVal;
+            pxFile.stream.Position = 0x49;
+            using (var w = new BinaryWriter(pxFile.stream, Encoding.Default, leaveOpen: true))
+                w.Write(pxFile.autoIncVal);
+        }
+
+        /// <summary>
+        /// Mirrors the parent .DB file's V4Hdr changeCount4 (offset 0x70) into
+        /// this .PX file. BDE/Pdxrbld compares this "table version" counter
+        /// against the index's own copy to decide whether the index is out
+        /// of date.
+        /// </summary>
+        public void SyncTableVersion(short changeCount4)
+        {
+            pxFile.stream.Position = 0x70;
+            using (var w = new BinaryWriter(pxFile.stream, Encoding.Default, leaveOpen: true))
+                w.Write(changeCount4);
+        }
+
+        /// <summary>
+        /// Increments the single-byte write counter at offset 0x2C
+        /// (pxlib's unknown2Bx2C[1]) once per index write. Discovered via
+        /// multi-pass SQLRunner testing: a valid .PX file increments this
+        /// byte by exactly 1 on every INSERT, independently of the parent
+        /// .DB file's changeCount1/changeCount2 (offset 0x2D), which the
+        /// .PX file does NOT mirror (it stays 0x00). This is being tried as
+        /// the actual "index version" field BDE/Pdxrbld checks.
+        /// </summary>
+        public void IncrementWriteCounter()
+        {
+            pxFile.stream.Position = 0x2C;
+            int current = pxFile.stream.ReadByte();
+            if (current < 0) current = 0;
+            byte next = (byte)(current + 1);
+            pxFile.stream.Position = 0x2C;
+            pxFile.stream.WriteByte(next);
+        }
+
         // ----------------------------------------------------------------
         // B-Tree: Insert
         // ----------------------------------------------------------------
@@ -114,6 +160,7 @@ namespace ParadoxReader
                 WriteBlock(newLeaf);
                 UpdateRootBlockId(newLeaf.BlockNumber);
                 UpdateLevelCount(1);
+                UpdateRecordCount(pxFile.RecordCount + 1);
                 return;
             }
 
@@ -132,6 +179,7 @@ namespace ParadoxReader
             {
                 InsertNonFull(root, entry);
             }
+            UpdateRecordCount(pxFile.RecordCount + 1);
         }
 
         private void InsertNonFull(PxBlock node, PxEntry entry)
@@ -202,6 +250,7 @@ namespace ParadoxReader
                 if (pxFile.pxLevelCount > 0)
                     UpdateLevelCount((byte)(pxFile.pxLevelCount - 1));
             }
+            UpdateRecordCount(pxFile.RecordCount - 1);
         }
 
         private void DeleteFromNode(PxBlock node, byte[] keyData)
@@ -368,6 +417,20 @@ namespace ParadoxReader
             pxFile.stream.Position = 0x20;
             using (var w = new BinaryWriter(pxFile.stream, Encoding.Default, leaveOpen: true))
                 w.Write(pxFile.pxLevelCount);
+        }
+
+        /// <summary>
+        /// Keeps the .PX file's own RecordCount header field (@ 0x06, int32) in
+        /// sync with the number of keys stored in the index. BDE/Pdxrbld
+        /// considers the index out of date/corrupt if this doesn't match the
+        /// actual number of B-tree entries.
+        /// </summary>
+        private void UpdateRecordCount(int recordCount)
+        {
+            pxFile.RecordCount = recordCount;
+            pxFile.stream.Position = 0x6;
+            using (var w = new BinaryWriter(pxFile.stream, Encoding.Default, leaveOpen: true))
+                w.Write(pxFile.RecordCount);
         }
 
         // ----------------------------------------------------------------

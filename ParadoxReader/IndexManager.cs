@@ -93,6 +93,49 @@ namespace ParadoxReader
                 idx.SyncChangeCount(changeCount1, changeCount2);
         }
 
+        /// <summary>
+        /// Mirrors the parent .DB file's autoIncVal (offset 0x49) into every
+        /// open index file. BDE/Pdxrbld considers an index out of date if its
+        /// own autoIncVal doesn't match the table's after an AutoInc field is
+        /// assigned.
+        /// </summary>
+        public void SyncAutoIncVal(int autoIncVal)
+        {
+            primaryIndex?.SyncAutoIncVal(autoIncVal);
+
+            foreach (var idx in secondaryIndexes)
+                idx.SyncAutoIncVal(autoIncVal);
+        }
+
+        /// <summary>
+        /// Mirrors the parent .DB file's V4Hdr changeCount4 (offset 0x70) into
+        /// every open index file. BDE/Pdxrbld compares this "table version"
+        /// counter against each index's own copy to decide whether the index
+        /// is out of date.
+        /// </summary>
+        public void SyncTableVersion(short changeCount4)
+        {
+            primaryIndex?.SyncTableVersion(changeCount4);
+
+            foreach (var idx in secondaryIndexes)
+                idx.SyncTableVersion(changeCount4);
+        }
+
+        /// <summary>
+        /// Increments the single-byte write counter at offset 0x2C in every
+        /// open index file. Discovered via multi-pass SQLRunner testing:
+        /// this byte increments by 1 on every write to a valid .PX/.Xnn
+        /// file, independently of the .DB file's own changeCount. Being
+        /// tried as the true "index version" field.
+        /// </summary>
+        public void IncrementWriteCounter()
+        {
+            primaryIndex?.IncrementWriteCounter();
+
+            foreach (var idx in secondaryIndexes)
+                idx.IncrementWriteCounter();
+        }
+
         // ----------------------------------------------------------------
         // Secondary index discovery
         // ----------------------------------------------------------------

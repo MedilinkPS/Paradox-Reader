@@ -54,7 +54,7 @@ namespace ParadoxReader
         internal byte[] unknown50x54;  //array[$0050..$0054] of byte;
         private byte refIntegrity;
         internal byte[] unknown56x57;  //array[$0056..$0057] of byte;
-        private V4Hdr V4Header;
+        internal V4Hdr V4Header;
         internal ParadoxFile.FieldInfo[] FieldTypes { get; set; } // array[1..255] of TFldInfoRec);
         private int tableNamePtr;
         private int[] fieldNamePtrArray;
@@ -268,7 +268,7 @@ namespace ParadoxReader
             short sometimesNumFields;
             ushort dosCodePage;
             private byte[] unknown6Cx6F;  //array[$006C..$006F] of byte;
-            private short changeCount4;
+            public short changeCount4;
             private byte[] unknown72x77; //    :  array[$0072..$0077] of byte;
 
             public V4Hdr(BinaryReader r)

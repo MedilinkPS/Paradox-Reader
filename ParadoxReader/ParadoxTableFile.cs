@@ -31,6 +31,7 @@ namespace ParadoxReader
         private readonly BlockManager    blockManager;
         private readonly IndexManager    indexManager;
         private readonly ParadoxFileLock fileLock;
+        private short                    tableVersion;
 
         public ParadoxPrimaryKey PrimaryKeyIndex;
         private ParadoxBlobFile  BlobFile;
@@ -57,6 +58,21 @@ namespace ParadoxReader
             fileLock = new ParadoxFileLock(fileName);
 
             DiscoverAssociatedFiles(fileName);
+
+            // changeCount4 lives at a fixed physical offset (0x70) even when the
+            // file's version is too old for V4Header to be parsed (fileVersionID < 5).
+            if (V4Header != null)
+            {
+                tableVersion = V4Header.changeCount4;
+            }
+            else
+            {
+                long savedPos = stream.Position;
+                stream.Position = 0x70;
+                using (var r = new BinaryReader(stream, Encoding.Default, leaveOpen: true))
+                    tableVersion = r.ReadInt16();
+                stream.Position = savedPos;
+            }
         }
 
         /// <summary>
@@ -233,7 +249,10 @@ namespace ParadoxReader
             }
 
             if (assigned)
+            {
                 WriteAutoIncValToHeader();
+                indexManager.SyncAutoIncVal(autoIncVal);
+            }
         }
 
         /// <summary>AutoIncVal (longint) is at offset 0x49.</summary>
@@ -326,6 +345,7 @@ namespace ParadoxReader
                 DbBlock first = blockManager.AllocateBlock();
                 firstBlock = (ushort)(first.BlockNumber + 1); // header stores 1-based block numbers
                 lastBlock  = (ushort)(first.BlockNumber + 1);
+                nextBlock  = (ushort)(first.BlockNumber + 1);
                 fileBlocks = 1;
                 WriteBlockHeadersToFileHeader();
                 return first;
@@ -378,6 +398,26 @@ namespace ParadoxReader
         }
 
         /// <summary>
+        /// changeCount4 (V4Hdr, offset 0x70, short) is the "table version"
+        /// counter that BDE/Pdxrbld compares against each index's own copy of
+        /// the value to decide whether the index is out of date. Must be
+        /// incremented on every insert/update/delete and mirrored into every
+        /// open index file. Written directly at the fixed physical offset
+        /// regardless of whether V4Header was parsed (older fileVersionIDs
+        /// don't parse it, but the header region and byte still exist).
+        /// </summary>
+        private void IncrementTableVersion()
+        {
+            short newValue = (short)((V4Header?.changeCount4 ?? tableVersion) + 1);
+            tableVersion = newValue;
+            if (V4Header != null) V4Header.changeCount4 = newValue;
+
+            stream.Position = 0x70;
+            using (var w = new BinaryWriter(stream, Encoding.Default, leaveOpen: true))
+                w.Write(newValue);
+        }
+
+        /// <summary>
         /// Writes block chain fields back to the header.
         /// Layout (from ReadHeader): RecordSize(2)@0x00, headerSize(2)@0x02,
         /// FileType(1)@0x04, maxTableSize(1)@0x05, RecordCount(4)@0x06, then
@@ -425,6 +465,10 @@ namespace ParadoxReader
             }
 
             indexManager.SyncChangeCount(changeCount1, changeCount2);
+
+            IncrementTableVersion();
+
+            indexManager.IncrementWriteCounter();
         }
 
         // ----------------------------------------------------------------
