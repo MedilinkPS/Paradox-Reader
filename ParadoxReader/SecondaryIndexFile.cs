@@ -20,7 +20,7 @@ namespace ParadoxReader
     /// 6 bytes: leftChildBlockNumber(ushort) + reserved(ushort) +
     /// usedBytes(ushort), where usedBytes = (entryCount - 1) * entrySize.
     /// </summary>
-    internal class SecondaryIndex : IDisposable
+    internal class SecondaryIndexFile : IDisposable
     {
         // ----------------------------------------------------------------
         // Constants
@@ -46,7 +46,7 @@ namespace ParadoxReader
         // Constructor
         // ----------------------------------------------------------------
 
-        public SecondaryIndex(string indexFilePath, ParadoxFile.FieldInfo[] indexedFields, int[] fieldIndices)
+        public SecondaryIndexFile(string indexFilePath, ParadoxFile.FieldInfo[] indexedFields, int[] fieldIndices)
         {
             this.indexedFields = indexedFields;
             this.fieldIndices  = fieldIndices;
@@ -61,7 +61,7 @@ namespace ParadoxReader
                              indexFile.FileType == ParadoxFileType.XgnFileInc) ? (ushort)0 : (ushort)1;
 
             System.Diagnostics.Debug.WriteLine(
-                $"[SecondaryIndex] Opened '{indexFilePath}': " +
+                $"[SecondaryIndexFile] Opened '{indexFilePath}': " +
                 $"rootBlock={indexFile.pxRootBlockId}, headerSize={indexFile.headerSize}, " +
                 $"maxTableSize={indexFile.maxTableSize}, blockSize={indexFile.maxTableSize * 0x400}, " +
                 $"streamLength={indexFile.stream.Length}, keyDataSize={keyDataSize}, " +
@@ -91,7 +91,7 @@ namespace ParadoxReader
         public void OnBlockChanged(object[] firstRowAllFieldValues, ushort blockNumber, int recordCount)
         {
             System.Diagnostics.Debug.WriteLine(
-                $"[SecondaryIndex.OnBlockChanged] blockNumber={blockNumber}, recordCount={recordCount}");
+                $"[SecondaryIndexFile.OnBlockChanged] blockNumber={blockNumber}, recordCount={recordCount}");
 
             if (recordCount <= 0)
             {
@@ -250,7 +250,7 @@ namespace ParadoxReader
         private void BTreeInsert(PxEntry entry)
         {
             System.Diagnostics.Debug.WriteLine(
-                $"[SecondaryIndex.BTreeInsert] rootBlock={indexFile.pxRootBlockId}, " +
+                $"[SecondaryIndexFile.BTreeInsert] rootBlock={indexFile.pxRootBlockId}, " +
                 $"key={BitConverter.ToString(entry.KeyData)}");
 
             var root = ReadBlock(indexFile.pxRootBlockId);
@@ -325,7 +325,7 @@ namespace ParadoxReader
         private void BTreeDelete(byte[] keyData)
         {
             System.Diagnostics.Debug.WriteLine(
-                $"[SecondaryIndex.BTreeDelete] rootBlock={indexFile.pxRootBlockId}, " +
+                $"[SecondaryIndexFile.BTreeDelete] rootBlock={indexFile.pxRootBlockId}, " +
                 $"key={BitConverter.ToString(keyData)}");
 
             if (indexFile.stream.Length <= indexFile.headerSize)
@@ -442,7 +442,7 @@ namespace ParadoxReader
             ushort n         = (ushort)((indexFile.stream.Length - indexFile.headerSize) / blockSize + blockBase);
             indexFile.stream.SetLength(indexFile.stream.Length + blockSize);
             System.Diagnostics.Debug.WriteLine(
-                $"[SecondaryIndex.AllocateBlock] Allocated block {n} at " +
+                $"[SecondaryIndexFile.AllocateBlock] Allocated block {n} at " +
                 $"offset={indexFile.headerSize + (long)(n - blockBase) * blockSize}, newStreamLength={indexFile.stream.Length}");
 
             // Keep the index file's own block-chain bookkeeping fields (nextBlock,
@@ -481,7 +481,7 @@ namespace ParadoxReader
             int  blockSize = indexFile.maxTableSize * 0x400;
             long pos       = indexFile.headerSize + (long)(blockNumber - blockBase) * blockSize;
             System.Diagnostics.Debug.WriteLine(
-                $"[SecondaryIndex.FreeBlock] Zeroing block {blockNumber} at offset={pos}");
+                $"[SecondaryIndexFile.FreeBlock] Zeroing block {blockNumber} at offset={pos}");
             indexFile.stream.Position = pos;
             indexFile.stream.Write(new byte[blockSize], 0, blockSize);
         }

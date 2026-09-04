@@ -104,7 +104,7 @@ namespace ParadoxReader
                 using (var idxMgr = new IndexManager(dbPath, file.FieldTypes, pkCount))
                 {
                     // Paradox leaf index entries are per-DB-BLOCK, not per-row (see
-                    // PrimaryIndex/SecondaryIndex remarks): index maintenance only
+                    // PrimaryIndexFile/SecondaryIndexFile remarks): index maintenance only
                     // needs the block's current first-row field values and record
                     // count, not the specific row that changed.
                     object[] firstRowValues = block.RecordCount > 0 ? block[0].DataValues : null;

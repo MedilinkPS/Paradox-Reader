@@ -8,7 +8,7 @@ using System.Text;
 
 namespace ParadoxReader
 {
-    public class ParadoxFile : IDisposable
+    public partial class ParadoxFile : IDisposable
     {
         public string TableName;
 
@@ -256,112 +256,5 @@ namespace ParadoxReader
         //    var memoSize = BitConverter.ToInt32(memoMetaData, 4);
         //    return GetString(memoDataBuffer, 0, memoSize);
         //}
-
-        public class V4Hdr
-        {
-            short fileVerID2;
-            short fileVerID3;
-            int encryption2;
-            int fileUpdateTime;  // 4.0 only
-            ushort hiFieldID;
-            ushort hiFieldIDinfo;
-            short sometimesNumFields;
-            ushort dosCodePage;
-            private byte[] unknown6Cx6F;  //array[$006C..$006F] of byte;
-            public short changeCount4;
-            private byte[] unknown72x77; //    :  array[$0072..$0077] of byte;
-
-            public V4Hdr(BinaryReader r)
-            {
-                fileVerID2 = r.ReadInt16();
-                fileVerID3 = r.ReadInt16();
-                encryption2 = r.ReadInt32();
-                fileUpdateTime = r.ReadInt32(); // 4.0 only
-                hiFieldID = r.ReadUInt16();
-                hiFieldIDinfo = r.ReadUInt16();
-                sometimesNumFields = r.ReadInt16();
-                dosCodePage = r.ReadUInt16();
-                unknown6Cx6F = r.ReadBytes(0x006F - 0x006C + 1); //array[$006C..$006F] of byte;
-                changeCount4 = r.ReadInt16();
-                unknown72x77 = r.ReadBytes(0x0077 - 0x0072 + 1); //    :  array[$0072..$0077] of byte;
-            }
-
-        }
-
-        internal class DataBlock
-        {
-            public ParadoxFile file;
-            ushort nextBlock;
-            internal ushort blockNumber;
-            short addDataSize;
-            public byte[] data;
-            private ParadoxReader.ParadoxRecord[] recCache;
-
-            public int RecordCount { get; private set; }
-
-            public DataBlock(ParadoxFile file, BinaryReader reader, ushort? expectedBlockNumber = null)
-            {
-                this.file = file;
-                this.nextBlock = reader.ReadUInt16();
-                this.blockNumber = reader.ReadUInt16();
-                this.addDataSize = reader.ReadInt16();
-                
-                // This is kind of unnecessary but I wanted to double check we were getting the correct blockNumber
-                if(expectedBlockNumber.HasValue && this.blockNumber != expectedBlockNumber)
-                {
-                    throw new Exception($"Expected block number {expectedBlockNumber} but got {this.blockNumber}");
-                }
-
-                var recordCount = (addDataSize / (this.file.RecordSize)) + 1;
-                this.RecordCount = recordCount;
-                var recordCountBySize = this.RecordCount * (this.file.RecordSize);
-                this.data = reader.ReadBytes(recordCountBySize);
-                this.recCache = new ParadoxReader.ParadoxRecord[this.data.Length];
-            }
-
-            public ParadoxReader.ParadoxRecord this[int recIndex]
-            {
-                get
-                {
-                    if (this.recCache[recIndex] == null)
-                    {
-                        this.recCache[recIndex] = new ParadoxReader.ParadoxRecord(this, recIndex);
-                    }
-                    return this.recCache[recIndex];
-                }
-            }
-
-            internal void WriteRecordToFile(int recIndex)
-            {
-                file.WriteRecords(this.data, this.blockNumber, new[] { recIndex } );
-            }
-
-            internal void WriteRecordsToFile()
-            {
-                file.WriteRecords(this.data, this.blockNumber, Enumerable.Range(0, this.data.Length).ToArray());
-            }
-        }
-
-
-
-        internal class FieldInfo
-        {
-            public ParadoxFieldTypes fType;
-            public byte fSize;
-
-            public FieldInfo(ParadoxFieldTypes fType, byte fSize)
-            {
-                this.fType = fType;
-                this.fSize = fSize;
-            }
-
-            public FieldInfo(BinaryReader r)
-            {
-                this.fType = (ParadoxFieldTypes)r.ReadByte();
-                this.fSize = r.ReadByte();
-            }
-        }
-
-
     }
 }

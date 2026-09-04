@@ -15,8 +15,8 @@ namespace ParadoxReader
         // Fields
         // ----------------------------------------------------------------
 
-        private readonly PrimaryIndex         primaryIndex;
-        private readonly List<SecondaryIndex> secondaryIndexes = new List<SecondaryIndex>();
+        private readonly PrimaryIndexFile         PrimaryIndexFile;
+        private readonly List<SecondaryIndexFile> secondaryIndexes = new List<SecondaryIndexFile>();
         private readonly ParadoxFile.FieldInfo[]          allFields;
         private readonly int                  primaryKeyFieldCount;
 
@@ -36,7 +36,7 @@ namespace ParadoxReader
                 if (File.Exists(pxPath))
                 {
                     var keyFields = GetFieldRange(0, primaryKeyFieldCount);
-                    primaryIndex  = new PrimaryIndex(pxPath, keyFields);
+                    PrimaryIndexFile  = new PrimaryIndexFile(pxPath, keyFields);
                 }
             }
 
@@ -66,7 +66,7 @@ namespace ParadoxReader
         /// <param name="recordCount">The block's current record count.</param>
         public void OnBlockChanged(object[] firstRowFieldValues, ushort blockNumber, int recordCount)
         {
-            primaryIndex?.OnBlockChanged(
+            PrimaryIndexFile?.OnBlockChanged(
                 GetKeyValues(firstRowFieldValues, 0, primaryKeyFieldCount),
                 blockNumber, recordCount);
 
@@ -82,7 +82,7 @@ namespace ParadoxReader
         /// </summary>
         public void SyncChangeCount(byte changeCount1, byte changeCount2)
         {
-            primaryIndex?.SyncChangeCount(changeCount1, changeCount2);
+            PrimaryIndexFile?.SyncChangeCount(changeCount1, changeCount2);
 
             foreach (var idx in secondaryIndexes)
                 idx.SyncChangeCount(changeCount1, changeCount2);
@@ -96,7 +96,7 @@ namespace ParadoxReader
         /// </summary>
         public void SyncAutoIncVal(int autoIncVal)
         {
-            primaryIndex?.SyncAutoIncVal(autoIncVal);
+            PrimaryIndexFile?.SyncAutoIncVal(autoIncVal);
 
             foreach (var idx in secondaryIndexes)
                 idx.SyncAutoIncVal(autoIncVal);
@@ -110,7 +110,7 @@ namespace ParadoxReader
         /// </summary>
         public void SyncTableVersion(short changeCount4)
         {
-            primaryIndex?.SyncTableVersion(changeCount4);
+            PrimaryIndexFile?.SyncTableVersion(changeCount4);
 
             foreach (var idx in secondaryIndexes)
                 idx.SyncTableVersion(changeCount4);
@@ -125,7 +125,7 @@ namespace ParadoxReader
         /// </summary>
         public void IncrementWriteCounter()
         {
-            primaryIndex?.IncrementWriteCounter();
+            PrimaryIndexFile?.IncrementWriteCounter();
 
             foreach (var idx in secondaryIndexes)
                 idx.IncrementWriteCounter();
@@ -143,7 +143,7 @@ namespace ParadoxReader
                 try
                 {
                     secondaryIndexes.Add(
-                        new SecondaryIndex(info.FilePath, info.IndexedFields, info.FieldIndices));
+                        new SecondaryIndexFile(info.FilePath, info.IndexedFields, info.FieldIndices));
                 }
                 catch (Exception ex)
                 {
@@ -179,7 +179,7 @@ namespace ParadoxReader
 
         public void Dispose()
         {
-            primaryIndex?.Dispose();
+            PrimaryIndexFile?.Dispose();
             foreach (var idx in secondaryIndexes)
                 idx.Dispose();
         }

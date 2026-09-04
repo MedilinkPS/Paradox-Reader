@@ -21,7 +21,7 @@ namespace ParadoxReader
     /// usedBytes(ushort), where usedBytes = (entryCount - 1) * entrySize
     /// (confirmed for entryCount 1, 2, and 3).
     /// </summary>
-    internal class PrimaryIndex : IDisposable
+    internal class PrimaryIndexFile : IDisposable
     {
         // ----------------------------------------------------------------
         // Constants
@@ -44,7 +44,7 @@ namespace ParadoxReader
         // Constructor
         // ----------------------------------------------------------------
 
-        public PrimaryIndex(string pxFilePath, ParadoxFile.FieldInfo[] primaryKeyFields)
+        public PrimaryIndexFile(string pxFilePath, ParadoxFile.FieldInfo[] primaryKeyFields)
         {
             this.primaryKeyFields = primaryKeyFields;
 
@@ -56,7 +56,7 @@ namespace ParadoxReader
             blockCapacity = pxFile.maxTableSize * 0x400 - HEADER_SIZE;
 
             System.Diagnostics.Debug.WriteLine(
-                $"[PrimaryIndex] Opened '{pxFilePath}': " +
+                $"[PrimaryIndexFile] Opened '{pxFilePath}': " +
                 $"rootBlock={pxFile.pxRootBlockId}, headerSize={pxFile.headerSize}, " +
                 $"maxTableSize={pxFile.maxTableSize}, blockSize={pxFile.maxTableSize * 0x400}, " +
                 $"streamLength={pxFile.stream.Length}, keyDataSize={keyDataSize}, " +
@@ -84,7 +84,7 @@ namespace ParadoxReader
         public void OnBlockChanged(object[] firstRowKeyValues, ushort dbBlockNumber, int recordCount)
         {
             System.Diagnostics.Debug.WriteLine(
-                $"[PrimaryIndex.OnBlockChanged] dbBlockNumber={dbBlockNumber}, recordCount={recordCount}");
+                $"[PrimaryIndexFile.OnBlockChanged] dbBlockNumber={dbBlockNumber}, recordCount={recordCount}");
 
             if (recordCount <= 0)
             {
@@ -234,7 +234,7 @@ namespace ParadoxReader
         private void BTreeInsert(PxEntry entry)
         {
             System.Diagnostics.Debug.WriteLine(
-                $"[PrimaryIndex.BTreeInsert] rootBlock={pxFile.pxRootBlockId}, " +
+                $"[PrimaryIndexFile.BTreeInsert] rootBlock={pxFile.pxRootBlockId}, " +
                 $"key={BitConverter.ToString(entry.KeyData)}");
 
             var root = ReadBlock(pxFile.pxRootBlockId);
@@ -309,7 +309,7 @@ namespace ParadoxReader
         private void BTreeDelete(byte[] keyData)
         {
             System.Diagnostics.Debug.WriteLine(
-                $"[PrimaryIndex.BTreeDelete] rootBlock={pxFile.pxRootBlockId}, " +
+                $"[PrimaryIndexFile.BTreeDelete] rootBlock={pxFile.pxRootBlockId}, " +
                 $"key={BitConverter.ToString(keyData)}");
 
             if (pxFile.stream.Length <= pxFile.headerSize)
@@ -379,7 +379,7 @@ namespace ParadoxReader
 
             if (pos < pxFile.headerSize || pos + blockSize > pxFile.stream.Length)
                 throw new InvalidOperationException(
-                    $"[PrimaryIndex.ReadBlock] Block {blockNumber} is out of range. " +
+                    $"[PrimaryIndexFile.ReadBlock] Block {blockNumber} is out of range. " +
                     $"offset={pos}, blockSize={blockSize}, " +
                     $"streamLength={pxFile.stream.Length}, headerSize={pxFile.headerSize}.");
 
@@ -438,7 +438,7 @@ namespace ParadoxReader
             ushort n         = (ushort)((pxFile.stream.Length - pxFile.headerSize) / blockSize + 1);
             pxFile.stream.SetLength(pxFile.stream.Length + blockSize);
             System.Diagnostics.Debug.WriteLine(
-                $"[PrimaryIndex.AllocateBlock] Allocated block {n} at " +
+                $"[PrimaryIndexFile.AllocateBlock] Allocated block {n} at " +
                 $"offset={pxFile.headerSize + (long)(n - 1) * blockSize}, newStreamLength={pxFile.stream.Length}");
 
             // Keep the .PX file's own block-chain bookkeeping fields (nextBlock,
@@ -476,7 +476,7 @@ namespace ParadoxReader
             int  blockSize = pxFile.maxTableSize * 0x400;
             long pos       = pxFile.headerSize + (long)(blockNumber - 1) * blockSize;
             System.Diagnostics.Debug.WriteLine(
-                $"[PrimaryIndex.FreeBlock] Zeroing block {blockNumber} at offset={pos}");
+                $"[PrimaryIndexFile.FreeBlock] Zeroing block {blockNumber} at offset={pos}");
             pxFile.stream.Position = pos;
             pxFile.stream.Write(new byte[blockSize], 0, blockSize);
         }

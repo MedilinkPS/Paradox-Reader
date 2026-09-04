@@ -333,7 +333,7 @@ namespace ParadoxReader
         /// <summary>
         /// Notifies the index manager that a .DB data block's contents have
         /// changed. Paradox leaf index entries are per-DB-BLOCK, not per-row
-        /// (see PrimaryIndex/SecondaryIndex remarks), so index maintenance
+        /// (see PrimaryIndexFile/SecondaryIndexFile remarks), so index maintenance
         /// only needs the block's current first-row field values and record
         /// count — not the specific row that changed.
         /// </summary>
