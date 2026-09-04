@@ -78,19 +78,46 @@ namespace ParadoxReader
 
                 if (startField >= 0 && startField < allFields.Length)
                 {
-                    // Primary path: use the explicit field number from the header.
-                    // The secondary index key is composed of the indexed field(s)
-                    // followed by the parent table's primary key field(s), which
-                    // are appended for uniqueness. f.FieldCount reflects this total,
-                    // so the indexed portion is FieldCount - primaryKeyFieldCount
-                    // (falling back to the full count when that would be non-positive).
+                    // Primary path: use the explicit field number from the header
+                    // to locate the FIRST indexed field. The secondary index key
+                    // is composed of the indexed field(s) followed by the parent
+                    // table's primary key field(s), which are appended for
+                    // uniqueness. f.FieldCount reflects this total, so the
+                    // indexed portion is FieldCount - primaryKeyFieldCount
+                    // (falling back to the full count when that would be
+                    // non-positive).
                     int indexedFieldCount = f.FieldCount - primaryKeyFieldCount;
                     if (indexedFieldCount <= 0) indexedFieldCount = f.FieldCount;
 
-                    for (int i = 0; i < indexedFieldCount && (startField + i) < allFields.Length; i++)
+                    // Composite indexes (indexedFieldCount > 1) are not
+                    // guaranteed to cover contiguous parent-table field
+                    // positions (e.g. CREATE INDEX ... (INTVAL, DATEVAL) with
+                    // other columns between them), so match each subsequent
+                    // indexed field by type+size, searching forward from just
+                    // after the previous match rather than assuming (startField + i).
+                    int searchFrom = startField;
+                    for (int i = 0; i < indexedFieldCount; i++)
                     {
-                        indexedFields.Add(allFields[startField + i]);
-                        fieldIndices.Add(startField + i);
+                        var idxField = f.FieldTypes[i];
+                        int foundPos = -1;
+                        for (int j = searchFrom; j < allFields.Length; j++)
+                        {
+                            if (allFields[j].fType == idxField.fType && allFields[j].fSize == idxField.fSize)
+                            {
+                                foundPos = j;
+                                break;
+                            }
+                        }
+
+                        // Fall back to the contiguous assumption if no forward
+                        // type+size match was found (e.g. ambiguous/ordering
+                        // edge cases not covered by the composite scan above).
+                        if (foundPos < 0) foundPos = startField + i;
+                        if (foundPos >= allFields.Length) break;
+
+                        indexedFields.Add(allFields[foundPos]);
+                        fieldIndices.Add(foundPos);
+                        searchFrom = foundPos + 1;
                     }
 
                     // Append the primary key fields (positions 0..primaryKeyFieldCount-1)

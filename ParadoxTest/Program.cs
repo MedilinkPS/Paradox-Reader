@@ -38,10 +38,13 @@ namespace ParadoxTest
     ///     )
     ///
     ///     CREATE INDEX SECIDX ON "c:\temp\testtab.db" (SECVAL)
+    ///     CREATE INDEX IDXCHAR ON "c:\temp\testtab.db" (CHARVAL)
+    ///     CREATE INDEX IDXCOMPOSITE ON "c:\temp\testtab.db" (INTVAL, DATEVAL)
     ///
-    /// The resulting TESTTAB.DB/.PX/.MB/.XG0/.YG0 files were then copied into
-    /// ParadoxTest\data and are copied to bin\Debug\data on every build
-    /// (CopyToOutputDirectory=Always in ParadoxTest.csproj).
+    /// The resulting TESTTAB.DB/.PX/.MB and secondary index files (.XG0/.YG0
+    /// for SECIDX, .XG1/.YG1 for IDXCHAR, .XG2/.YG2 for IDXCOMPOSITE) were
+    /// then copied into ParadoxTest\data and are copied to bin\Debug\data on
+    /// every build (CopyToOutputDirectory=Always in ParadoxTest.csproj).
     /// ------------------------------------------------------------------------
     /// </summary>
     internal class Program
@@ -67,17 +70,18 @@ namespace ParadoxTest
         // verify (via SELECT) that writes performed by ParadoxReader are visible
         // to BDE, and to run Pdxrbld-equivalent consistency checks.
         private const string SqlRunnerExePath =
-            @"XXX";
+            @"XXXX";
 
         // Paradox/BDE has historical issues with long paths and permissions on
         // some folders (Program Files, deeply nested repo paths, etc.), so all
         // test tables are copied to/run from c:\temp, which is short and always
         // writable.
         private const string TestFolder   = @"c:\temp\paradoxtest";
-        // Full variant: .DB + .MB + .PX (primary index) + .XG0/.YG0
-        // (secondary index SECIDX). Both no-indices and no-secondary-index
-        // variants passed cleanly after the block-chain fix; this is the
-        // final, most complete variant to validate.
+        // Full variant: .DB + .MB + .PX (primary index) + secondary indexes
+        // SECIDX (.XG0/.YG0), IDXCHAR (.XG1/.YG1), IDXCOMPOSITE (.XG2/.YG2).
+        // Both no-indices and no-secondary-index variants passed cleanly
+        // after the block-chain fix; this is the final, most complete
+        // variant to validate.
         private const string TableName    = "TESTTAB.DB";
 
         private static string SourceDataFolder =>
@@ -151,8 +155,16 @@ namespace ParadoxTest
             TestConditionIndexLookup();
 
             Console.WriteLine();
-            Console.WriteLine("=== Test 5c: Condition + secondary index lookup ===");
+            Console.WriteLine("=== Test 5c: Condition + secondary index lookup (SECIDX / SECVAL) ===");
             TestConditionSecondaryIndexLookup();
+
+            Console.WriteLine();
+            Console.WriteLine("=== Test 5d: Condition + secondary index lookup (IDXCHAR / CHARVAL) ===");
+            TestConditionSecondaryIndexLookupCharVal();
+
+            Console.WriteLine();
+            Console.WriteLine("=== Test 5e: Condition + secondary index lookup (IDXCOMPOSITE / INTVAL, DATEVAL) ===");
+            TestConditionSecondaryIndexLookupComposite();
 
             Console.WriteLine();
             Console.WriteLine("=== Test 6: Verify with SQLRunner ===");
@@ -601,8 +613,8 @@ namespace ParadoxTest
 
         /// <summary>
         /// Wipes and recreates c:\temp\paradoxtest, then copies a fresh copy of
-        /// TESTTAB.DB (and its associated .PX/.MB/.XG0/.YG0 files) from the
-        /// build output's data folder, so every run starts from a known state.
+        /// TESTTAB.DB (and its associated .PX/.MB and secondary index files) from
+        /// the build output's data folder, so every run starts from a known state.
         /// </summary>
         private static void ResetTestFolder()
         {
@@ -840,8 +852,25 @@ namespace ParadoxTest
         }
 
         // --------------------------------------------------------------------
-        // Test 5c: Condition + secondary index lookup
+        // Test 5c/5d/5e: Condition + secondary index lookup
         // --------------------------------------------------------------------
+
+        /// <summary>
+        /// Finds the first open secondary index whose composed key starts
+        /// with <paramref name="leadingFieldIndex"/> (i.e. it is the index's
+        /// primary/leading indexed field, not just incidentally present via
+        /// the appended primary-key suffix). Returns null if no such index
+        /// is open (e.g. table copied without its .Xnn/.Xgn companions).
+        /// </summary>
+        private static SecondaryIndexHandle FindSecondaryIndexByLeadingField(ParadoxTableFile table, int leadingFieldIndex)
+        {
+            foreach (var idx in table.SecondaryIndexes)
+            {
+                if (idx.FieldIndices.Length > 0 && idx.FieldIndices[0] == leadingFieldIndex)
+                    return idx;
+            }
+            return null;
+        }
 
         /// <summary>
         /// Mirrors <see cref="TestConditionIndexLookup"/> but exercises a
@@ -853,23 +882,17 @@ namespace ParadoxTest
         {
             using (var table = new ParadoxTableFile(TestFolder, TableName))
             {
-                if (table.SecondaryIndexes.Count == 0)
+                var index = FindSecondaryIndexByLeadingField(table, F_SECVAL);
+                if (index == null)
                 {
-                    Console.WriteLine("  [skip] No secondary index files open for this table; cannot test index lookup.");
+                    Console.WriteLine("  [skip] No secondary index over SECVAL (SECIDX) is open for this table; cannot test index lookup.");
                     return;
                 }
-
-                var index = table.SecondaryIndexes[0];
 
                 // The index's composed key layout may differ from the parent
                 // table's field layout, so map F_SECVAL's table position to
                 // its position within this index's own key via FieldIndices.
                 int secValIndexPos = Array.IndexOf(index.FieldIndices, F_SECVAL);
-                if (secValIndexPos < 0)
-                {
-                    Console.WriteLine("  [skip] SECVAL is not covered by the first secondary index ({0}); cannot test index lookup.", index.FilePath);
-                    return;
-                }
 
                 var condition =
                     new ParadoxCondition.LogicalAnd(
@@ -892,6 +915,99 @@ namespace ParadoxTest
                     }
                 }
                 Console.WriteLine("  (2 <= SECVAL <= 4) matched {0} record(s) via {1} secondary index lookup.", recIndex - 1, Path.GetFileName(index.FilePath));
+            }
+        }
+
+        /// <summary>
+        /// Exercises the IDXCHAR secondary index (CHARVAL), validating the
+        /// Alpha-type key encode/decode/compare path through
+        /// KeySerializer.Deserialize and KeySerializer's Alpha comparison
+        /// (ordinal, trimmed of trailing nulls) - untested by the numeric
+        /// SECVAL index above.
+        /// </summary>
+        private static void TestConditionSecondaryIndexLookupCharVal()
+        {
+            using (var table = new ParadoxTableFile(TestFolder, TableName))
+            {
+                var index = FindSecondaryIndexByLeadingField(table, F_CHARVAL);
+                if (index == null)
+                {
+                    Console.WriteLine("  [skip] No secondary index over CHARVAL (IDXCHAR) is open for this table; cannot test index lookup.");
+                    return;
+                }
+
+                int charValIndexPos = Array.IndexOf(index.FieldIndices, F_CHARVAL);
+
+                // MakeSampleFieldValues produces CHARVAL = "CHAR-append" + secVal
+                // (plus "CHAR-updated" for the row updated in Test 2), so an
+                // equality match on one specific appended value is a simple,
+                // deterministic check of the Alpha index path.
+                var condition =
+                    new ParadoxCondition.Compare(ParadoxCompareOperator.Equal, "CHAR-append2", F_CHARVAL, charValIndexPos);
+
+                var qry = index.Enumerate(condition);
+                int recIndex = 1;
+                using (var rdr = new ParadoxDataReader(table, qry))
+                {
+                    while (rdr.Read())
+                    {
+                        Console.WriteLine("Record #{0}", recIndex);
+                        for (int i = 0; i < rdr.FieldCount; i++)
+                        {
+                            Console.WriteLine("    {0} = {1}", rdr.GetName(i), rdr[i]);
+                        }
+
+                        if (++recIndex > 10) { break; }
+                    }
+                }
+                Console.WriteLine("  (CHARVAL = 'CHAR-append2') matched {0} record(s) via {1} secondary index lookup.", recIndex - 1, Path.GetFileName(index.FilePath));
+            }
+        }
+
+        /// <summary>
+        /// Exercises the IDXCOMPOSITE secondary index (INTVAL, DATEVAL),
+        /// validating a true multi-indexed-field composite key (as opposed
+        /// to SECIDX/IDXCHAR, which each have a single indexed field plus
+        /// the appended primary key). Only the leading indexed field
+        /// (INTVAL) is used for pruning here, matching how IsIndexPossible
+        /// evaluates a single Compare condition against the composed key.
+        /// </summary>
+        private static void TestConditionSecondaryIndexLookupComposite()
+        {
+            using (var table = new ParadoxTableFile(TestFolder, TableName))
+            {
+                var index = FindSecondaryIndexByLeadingField(table, F_INTVAL);
+                if (index == null)
+                {
+                    Console.WriteLine("  [skip] No secondary index over INTVAL (IDXCOMPOSITE) is open for this table; cannot test index lookup.");
+                    return;
+                }
+
+                int intValIndexPos = Array.IndexOf(index.FieldIndices, F_INTVAL);
+
+                // MakeSampleFieldValues sets INTVAL = 100 + secVal, so this
+                // range covers secVal in [2, 4], same rows as Test 5c.
+                var condition =
+                    new ParadoxCondition.LogicalAnd(
+                        new ParadoxCondition.Compare(ParadoxCompareOperator.GreaterOrEqual, 102, F_INTVAL, intValIndexPos),
+                        new ParadoxCondition.Compare(ParadoxCompareOperator.LessOrEqual, 104, F_INTVAL, intValIndexPos));
+
+                var qry = index.Enumerate(condition);
+                int recIndex = 1;
+                using (var rdr = new ParadoxDataReader(table, qry))
+                {
+                    while (rdr.Read())
+                    {
+                        Console.WriteLine("Record #{0}", recIndex);
+                        for (int i = 0; i < rdr.FieldCount; i++)
+                        {
+                            Console.WriteLine("    {0} = {1}", rdr.GetName(i), rdr[i]);
+                        }
+
+                        if (++recIndex > 10) { break; }
+                    }
+                }
+                Console.WriteLine("  (102 <= INTVAL <= 104) matched {0} record(s) via {1} secondary index lookup.", recIndex - 1, Path.GetFileName(index.FilePath));
             }
         }
 
