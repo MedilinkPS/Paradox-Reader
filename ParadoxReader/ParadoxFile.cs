@@ -63,7 +63,7 @@ namespace ParadoxReader
         internal readonly Stream stream;
         private readonly BinaryReader reader;
 
-        public ParadoxFile(string fileName) : this(new FileStream(fileName, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
+        public ParadoxFile(string filePath) : this(new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
         {
         }
 
@@ -77,7 +77,7 @@ namespace ParadoxReader
 
         public virtual void Dispose()
         {
-            this.stream.Dispose();
+            this.stream?.Dispose();
         }
 
         internal virtual byte[] ReadBlob(byte[] blobInfo, int len, int hsize)

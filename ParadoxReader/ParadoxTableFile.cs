@@ -28,7 +28,7 @@ namespace ParadoxReader
         // Fields
         // ----------------------------------------------------------------
 
-        private readonly string          fileName;
+        private readonly string          filePath; // Full path to the .DB file (not just the file name).
         private readonly BlockManager    blockManager;
         private readonly IndexManager    indexManager;
         private readonly ParadoxFileLock fileLock;
@@ -62,9 +62,9 @@ namespace ParadoxReader
         // Constructor
         // ----------------------------------------------------------------
 
-        public ParadoxTableFile(string fileName) : base(fileName)
+        public ParadoxTableFile(string filePath) : base(filePath)
         {
-            this.fileName = fileName;
+            this.filePath = filePath;
 
             blockManager = new BlockManager(
                 stream,
@@ -73,13 +73,13 @@ namespace ParadoxReader
                 maxTableSize);
 
             indexManager = new IndexManager(
-                fileName,
+                filePath,
                 FieldTypes,
                 primaryKeyFields);
 
-            fileLock = new ParadoxFileLock(fileName);
+            fileLock = new ParadoxFileLock(filePath);
 
-            DiscoverAssociatedFiles(fileName);
+            DiscoverAssociatedFiles(filePath);
 
             // changeCount4 lives at a fixed physical offset (0x70) even when the
             // file's version is too old for V4Header to be parsed (fileVersionID < 5).
