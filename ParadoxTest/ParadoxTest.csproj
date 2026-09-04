@@ -43,12 +43,15 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
-    <Compile Include="Program.cs" />
+    <Compile Include="LibUpdateTest.cs" />
     <Compile Include="Configuration.cs" />
+    <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="app.config" />
+    <None Include="bin\Debug\checkhdr.ps1" />
+    <None Include="bin\Debug\dumpmb.ps1" />
     <None Include="ClassDiagram1.cd" />
     <None Include="data\testtab.DB">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
@@ -65,25 +68,34 @@
     <None Include="data\testtab.YG0">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Include="data\testtabnoindex.DB">
+    <None Include="data\testtab_insert1.DB">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Include="data\testtabnoindex2.DB">
+    <None Include="data\testtab_insert1.MB">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Include="data\testtabnoindex2.MB">
+    <None Include="data\testtab_insert1.PX">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Include="data\zakazky.db">
+    <None Include="data\testtab_insert1.XG0">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Include="data\zakazky.PX">
+    <None Include="data\testtab_insert1.YG0">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Include="data\zakazky.XG0">
+    <None Include="data\testtab_noindices.DB">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
-    <None Include="data\zakazky.YG0">
+    <None Include="data\testtab_noindices.MB">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="data\testtab_nosecindex.DB">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="data\testtab_nosecindex.MB">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </None>
+    <None Include="data\testtab_nosecindex.PX">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>
   </ItemGroup>
@@ -93,5 +105,6 @@
       <Name>ParadoxReader</Name>
     </ProjectReference>
   </ItemGroup>
+  <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>

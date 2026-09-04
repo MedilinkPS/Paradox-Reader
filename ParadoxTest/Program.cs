@@ -1,172 +1,1144 @@
 using System;
 using System.Collections.Generic;
-using System.Data.SqlClient;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Text;
 using ParadoxReader;
 
 namespace ParadoxTest
 {
+    /// <summary>
+    /// Test harness for ParadoxReader's write path (InsertRecord / AppendRecord /
+    /// UpdateRecord / DeleteRecord) and index maintenance (.PX / .Xnn), validated
+    /// against a SQLRunner + BDE's own Pdxrbld-style "no errors found"
+    /// consistency checks.
+    ///
+    /// ------------------------------------------------------------------------
+    /// TESTTAB.DB was created with the following BDE Local SQL, executed once via
+    /// SQLRunner (kept here for reference/reproducibility):
+    ///
+    ///     CREATE TABLE "c:\temp\testtab.db" (
+    ///         ID           AUTOINC,
+    ///         SECVAL       SMALLINT,
+    ///         INTVAL       INTEGER,
+    ///         DECVAL       DECIMAL(10, 2),
+    ///         NUMVAL       NUMERIC(10, 2),
+    ///         FLOATVAL     FLOAT(10, 2),
+    ///         CHARVAL      CHARACTER(20),
+    ///         VARCHARVAL   VARCHAR(50),
+    ///         DATEVAL      DATE,
+    ///         BOOLVAL      BOOLEAN,
+    ///         MEMOVAL      BLOB(240, 1),
+    ///         TIMEVAL      TIME,
+    ///         TIMESTAMPVAL TIMESTAMP,
+    ///         MONEYVAL     MONEY,
+    ///         BYTESVAL     BYTES(10),
+    ///         PRIMARY KEY (ID)
+    ///     )
+    ///
+    ///     CREATE INDEX SECIDX ON "c:\temp\testtab.db" (SECVAL)
+    ///
+    /// The resulting TESTTAB.DB/.PX/.MB/.XG0/.YG0 files were then copied into
+    /// ParadoxTest\data and are copied to bin\Debug\data on every build
+    /// (CopyToOutputDirectory=Always in ParadoxTest.csproj).
+    /// ------------------------------------------------------------------------
+    /// </summary>
     internal class Program
     {
+        // 0-based field indexes, matching the CREATE TABLE column order above.
+        private const int F_ID           = 0; // AUTOINC   (primary key)
+        private const int F_SECVAL       = 1; // SMALLINT  (secondary key)
+        private const int F_INTVAL       = 2; // INTEGER
+        private const int F_DECVAL       = 3; // DECIMAL(10,2)
+        private const int F_NUMVAL       = 4; // NUMERIC(10,2)
+        private const int F_FLOATVAL     = 5; // FLOAT(10,2)
+        private const int F_CHARVAL      = 6; // CHARACTER(20)
+        private const int F_VARCHARVAL   = 7; // VARCHAR(50)
+        private const int F_DATEVAL      = 8; // DATE
+        private const int F_BOOLVAL      = 9; // BOOLEAN
+        private const int F_MEMOVAL      = 10; // BLOB(240,1) memo
+        private const int F_TIMEVAL      = 11; // TIME
+        private const int F_TIMESTAMPVAL = 12; // TIMESTAMP
+        private const int F_MONEYVAL     = 13; // MONEY
+        private const int F_BYTESVAL     = 14; // BYTES(10)
 
+        // Hard-coded per user instructions; SQLRunner is used to independently
+        // verify (via SELECT) that writes performed by ParadoxReader are visible
+        // to BDE, and to run Pdxrbld-equivalent consistency checks.
+        private const string SqlRunnerExePath =
+            @"XXX";
+
+        // Paradox/BDE has historical issues with long paths and permissions on
+        // some folders (Program Files, deeply nested repo paths, etc.), so all
+        // test tables are copied to/run from c:\temp, which is short and always
+        // writable.
+        private const string TestFolder   = @"c:\temp\paradoxtest";
+        // Full variant: .DB + .MB + .PX (primary index) + .XG0/.YG0
+        // (secondary index SECIDX). Both no-indices and no-secondary-index
+        // variants passed cleanly after the block-chain fix; this is the
+        // final, most complete variant to validate.
+        private const string TableName    = "TESTTAB.DB";
+
+        private static string SourceDataFolder =>
+            Path.Combine(Path.GetDirectoryName(Assembly.GetEntryAssembly().Location), "data");
 
         static void Main(string[] args)
         {
-
-            var dbPath = ParadoxTest.Configuration.GetParadoxDataFolderPath("Test");
-
-            if (!Directory.Exists(dbPath))
+            if (args.Length > 0 && args[0] == "libupdatetest")
             {
-                throw new DirectoryNotFoundException($"Could not find {dbPath}");
+                LibUpdateTest.Run();
+                return;
             }
 
-            var testTablePath = string.Empty;
-
-            var dbTableFilePaths = Directory.GetFiles(dbPath, "*.DB");
-            var dbTableFilePathsCount = dbTableFilePaths?.Length ?? 0;
-
-            var desiredTestTableName = "TESTTAB.DB";
-            //var desiredTestTableName = "TESTTABNOINDEX2.DB";
-
-            testTablePath = dbTableFilePaths.FirstOrDefault(path => path.IndexOf(desiredTestTableName, StringComparison.OrdinalIgnoreCase) >= 0);
-
-            if (string.IsNullOrWhiteSpace(testTablePath) && dbTableFilePathsCount > 0)
+            if (args.Length > 0 && args[0] == "libcreatetest")
             {
-                Random r = new Random();
-                testTablePath = dbTableFilePaths[r.Next(0, dbTableFilePathsCount)];
+                LibUpdateTest.RunCreateTest();
+                return;
             }
 
-            if (string.IsNullOrWhiteSpace(testTablePath) || !File.Exists(testTablePath))
+            // Before doing anything else that might launch SQLRunner, make
+            // sure we're starting from a genuinely clean state: no stray
+            // SQLRunner process left over from a prior hung/killed run, and
+            // no leftover *.LCK files. Without this, a previous crash can
+            // silently leave a zombie SQLRunner (or lock) around that then
+            // fights with the next run.
+            Directory.CreateDirectory(TestFolder);
+            EnsureNoSqlRunnerProcessesRunning();
+            DeleteStaleLockFilesWithRetry();
+
+            if (args.Length > 0 && args[0] == "sqlrunnermode")
             {
-                throw new FileNotFoundException($"Could not find .DB file in {dbPath}");
+                RunSqlRunnerOnlyMode();
+                return;
             }
 
-            Console.WriteLine("Test 1: sequential read first 10 records from start");
-            Console.WriteLine("==========================================================");
-            using (var table = new ParadoxTable(dbPath, Path.GetFileName(testTablePath)))
+            if (args.Length > 0 && args[0] == "harnessmode")
             {
-                var recIndex = 1;
+                RunHarnessOnlyMode();
+                return;
+            }
+
+            if (args.Length > 0 && args[0] == "comparesteps")
+            {
+                CompareStepSnapshots();
+                return;
+            }
+
+            ResetTestFolder();
+
+            Console.WriteLine("=== Test 1: Append records ===");
+            TestAppendRecords();
+
+            Console.WriteLine();
+            Console.WriteLine("=== Test 2: Update a record ===");
+            TestUpdateRecord();
+
+            Console.WriteLine();
+            Console.WriteLine("=== Test 3: Insert into an explicit slot ===");
+            TestInsertRecord();
+
+            Console.WriteLine();
+            Console.WriteLine("=== Test 4: Delete a record ===");
+            TestDeleteRecord();
+
+            Console.WriteLine();
+            Console.WriteLine("=== Test 5: Read back all records ===");
+            TestReadAllRecords();
+
+            Console.WriteLine();
+            Console.WriteLine("=== Test 5b: Condition + primary index lookup ===");
+            TestConditionIndexLookup();
+
+            Console.WriteLine();
+            Console.WriteLine("=== Test 5c: Condition + secondary index lookup ===");
+            TestConditionSecondaryIndexLookup();
+
+            Console.WriteLine();
+            Console.WriteLine("=== Test 6: Verify with SQLRunner ===");
+            TestVerifyWithSqlRunner();
+
+            Console.WriteLine();
+            Console.WriteLine("All tests completed.");
+        }
+
+        // --------------------------------------------------------------------
+        // Stepwise reproduction: SQLRunner-only mode vs. harness-only mode
+        // --------------------------------------------------------------------
+        //
+        // Both modes perform the *same logical sequence* of operations
+        // (append x5, update secval=3, insert id=6, delete secval=5, then the
+        // sentinel verify statements that historically caused SQLRunner to
+        // hang) but one path uses SQLRunner exclusively (raw BDE Local SQL)
+        // and the other uses ParadoxReader exclusively. After each step, the
+        // table's .DB/.MB files are snapshotted to disk (StepSnapshotRoot)
+        // labeled with the step number/name and which mode produced it, so
+        // `comparesteps` can byte-compare them afterward to find exactly
+        // where behavior/corruption diverges, and which step SQLRunner hangs
+        // on.
+
+        private const string StepSnapshotRoot = @"c:\temp\cmp\steps";
+
+        private static void SnapshotStep(string modeTag, int stepNumber, string stepName)
+        {
+            var destDir = Path.Combine(StepSnapshotRoot, modeTag);
+            Directory.CreateDirectory(destDir);
+
+            var tableBaseName = Path.GetFileNameWithoutExtension(TableName);
+            foreach (var srcFile in Directory.GetFiles(TestFolder, tableBaseName + ".*"))
+            {
+                var ext = Path.GetExtension(srcFile);
+                var destFile = Path.Combine(destDir, $"{stepNumber:D2}_{stepName}{ext}");
+                try { File.Copy(srcFile, destFile, overwrite: true); }
+                catch (Exception ex) { Console.WriteLine("  [warn] snapshot copy failed for {0}: {1}", srcFile, ex.Message); }
+            }
+
+            Console.WriteLine("  [snapshot] {0} step {1:D2} ({2}) captured -> {3}", modeTag, stepNumber, stepName, destDir);
+        }
+
+        /// <summary>
+        /// Runs ONLY the equivalent BDE Local SQL statements via SQLRunner,
+        /// with no ParadoxReader involvement at all, taking a snapshot of the
+        /// table files after each step. Intended to be run up to (and
+        /// including) the point where SQLRunner previously hung, so that
+        /// point can be pinpointed independent of the ParadoxReader harness.
+        /// </summary>
+        private static void RunSqlRunnerOnlyMode()
+        {
+            if (!File.Exists(SqlRunnerExePath))
+            {
+                Console.WriteLine("SQLRunner not found at {0}; aborting.", SqlRunnerExePath);
+                return;
+            }
+
+            ResetTestFolder();
+            var tablePath = Path.Combine(TestFolder, TableName);
+            int step = 0;
+
+            Console.WriteLine("=== [sqlrunnermode] Step {0:D2}: baseline (post-reset) ===", ++step);
+            SnapshotStep("sqlrunner", step, "baseline");
+
+            for (int i = 1; i <= 5; i++)
+            {
+                var v = MakeSampleFieldValues((short)i, "append" + i);
+                Console.WriteLine("=== [sqlrunnermode] Step {0:D2}: append secval={1} ===", ++step, i);
+                RunSqlRunner(BuildInsertSql(tablePath, v));
+                SnapshotStep("sqlrunner", step, $"append_secval{i}");
+            }
+
+            Console.WriteLine("=== [sqlrunnermode] Step {0:D2}: update secval=3 ===", ++step);
+            RunSqlRunner($"UPDATE '{tablePath}' T SET T.'CHARVAL' = 'CHAR-updated', T.'INTVAL' = 999999, T.'MONEYVAL' = 1234.56 WHERE T.'SECVAL' = 3");
+            SnapshotStep("sqlrunner", step, "update_secval3");
+
+            Console.WriteLine("=== [sqlrunnermode] Step {0:D2}: insert secval=6 ===", ++step);
+            var v6 = MakeSampleFieldValues(6, "insert6");
+            RunSqlRunner(BuildInsertSql(tablePath, v6));
+            SnapshotStep("sqlrunner", step, "insert_secval6");
+
+            Console.WriteLine("=== [sqlrunnermode] Step {0:D2}: delete secval=5 ===", ++step);
+            RunSqlRunner($"DELETE FROM '{tablePath}' T WHERE T.'SECVAL' = 5");
+            SnapshotStep("sqlrunner", step, "delete_secval5");
+
+            // These are the exact sentinel statements from TestVerifyWithSqlRunner,
+            // run one at a time here so a hang can be attributed to a specific
+            // statement instead of the batch as a whole.
+            Console.WriteLine("=== [sqlrunnermode] Step {0:D2}: verify UPDATE id=-999999 (no rows) ===", ++step);
+            RunSqlRunner($"UPDATE '{tablePath}' T SET T.'CHARVAL' = T.'CHARVAL' WHERE T.'ID' = -999999");
+            SnapshotStep("sqlrunner", step, "verify_update_noop");
+
+            Console.WriteLine("=== [sqlrunnermode] Step {0:D2}: verify UPDATE secval=-32000 (no rows) ===", ++step);
+            RunSqlRunner($"UPDATE '{tablePath}' T SET T.'INTVAL' = T.'INTVAL' WHERE T.'SECVAL' = -32000");
+            SnapshotStep("sqlrunner", step, "verify_update_sentinel");
+
+            Console.WriteLine("=== [sqlrunnermode] Step {0:D2}: verify INSERT secval=-1 ===", ++step);
+            RunSqlRunner($"INSERT INTO '{tablePath}' (SECVAL) VALUES (-1)");
+            SnapshotStep("sqlrunner", step, "verify_insert_sentinel");
+
+            Console.WriteLine("=== [sqlrunnermode] Step {0:D2}: verify DELETE secval=-1 ===", ++step);
+            RunSqlRunner($"DELETE FROM '{tablePath}' T WHERE T.'SECVAL' = -1");
+            SnapshotStep("sqlrunner", step, "verify_delete_sentinel");
+
+            Console.WriteLine("[sqlrunnermode] Completed all {0} steps without hanging.", step);
+        }
+
+        /// <summary>
+        /// Runs ONLY ParadoxReader operations (no SQLRunner at all) for the
+        /// same logical sequence as RunSqlRunnerOnlyMode, snapshotting the
+        /// table after each step, so `comparesteps` can byte-diff the two
+        /// step sequences to find where they first disagree.
+        /// </summary>
+        private static void RunHarnessOnlyMode()
+        {
+            ResetTestFolder();
+            int step = 0;
+
+            Console.WriteLine("=== [harness] Step {0:D2}: baseline (post-reset) ===", ++step);
+            SnapshotStep("harness", step, "baseline");
+
+            for (int i = 1; i <= 5; i++)
+            {
+                Console.WriteLine("=== [harness] Step {0:D2}: append secval={1} ===", ++step, i);
+                using (var table = new ParadoxTableFile(TestFolder, TableName))
+                {
+                    var values = MakeSampleFieldValues((short)i, "append" + i);
+                    table.AppendRecord(values);
+                }
+                SnapshotStep("harness", step, $"append_secval{i}");
+            }
+
+            Console.WriteLine("=== [harness] Step {0:D2}: update secval=3 ===", ++step);
+            using (var table = new ParadoxTableFile(TestFolder, TableName))
+            {
+                ParadoxRecord target = null;
                 foreach (var rec in table.Enumerate())
                 {
-                    Console.WriteLine("Record #{0}", recIndex);
-                    for (int i = 0; i < table.FieldCount; i++)
-                    {
-                        var fieldName = table.FieldNames[i] ?? string.Empty;
-                        var dataValue = rec.DataValues[i];
-                        var dataValueToStr = dataValue?.ToString() ?? string.Empty;
-                        if(dataValue != null && dataValue is byte[])
-                        {
-                            dataValueToStr = Convert.ToBase64String((byte[])dataValue);
-                        }
-                        Console.WriteLine("    {0} = {1}", fieldName, dataValueToStr);
-                    }
-
-
-                    var now = DateTime.Now;
-
-                    var tmpDataValues = new object[rec.DataValues.Length];
-                    for (int i = 0; i < rec.DataValues.Length; i++)
-                    {
-                        var value = rec.DataValues[i];
-                        if (value is ICloneable cloneable)
-                            tmpDataValues[i] = cloneable.Clone();
-                        else if (value is byte[] bytes)
-                            tmpDataValues[i] = (byte[])bytes.Clone();
-                        else
-                            tmpDataValues[i] = value; // Value types and immutable types (like string)
-                    }
-
-                    // Temporarily commenting out the following lines to avoid overwriting the original data values with test values, so we can just test memo in isolation.
-                    //tmpDataValues[0] = 9; // 9;
-                    //tmpDataValues[1] = "ZZZ"; // ZZZ
-                    //tmpDataValues[2] = -999.99d;
-                    //tmpDataValues[3] = 999.99d;
-                    //tmpDataValues[4] = (short)-999;
-                    //tmpDataValues[5] = 999;
-                    //tmpDataValues[6] = -999.99M; // 999.99d;
-                    //tmpDataValues[7] = now.Date;
-                    //tmpDataValues[8] = now.TimeOfDay;
-                    //tmpDataValues[9] = now;
-                    //tmpDataValues[10] = false;
-                    //tmpDataValues[11] = new byte[] { (byte)9, (byte)9, (byte)9 };
-                    // Temporarily commenting out the above lines to avoid overwriting the original data values with test values, so we can just test memo in isolation.
-
-                    // tmpDataValues[12] is a BLOb reference pointer — must NOT be overwritten with raw bytes
-                    // or it will corrupt the .DB file's blob index. Leave it as the cloned original.
-
-                    // Update the memo field (index 13) to "99", preserving its .MB blob pointer.
-                    var origMemo = tmpDataValues[13] as ParadoxReader.MemoValue;
-                    tmpDataValues[13] = new ParadoxReader.MemoValue("1111", origMemo?.BlobInfo);
-
-                    Console.WriteLine("Setting Record #{0}", recIndex);
-
-                    rec.DataValues = tmpDataValues;
-
-                    rec.Save(); // Serialize DataValues back to block and write to disk
-
-                    Console.WriteLine("Re-reading Record #{0}", recIndex);
-                    for (int i = 0; i < table.FieldCount; i++)
-                    {
-                        var fieldName = table.FieldNames[i] ?? string.Empty;
-                        var dataValue = rec.DataValues[i];
-                        var dataValueToStr = dataValue?.ToString() ?? string.Empty;
-                        if (dataValue != null && dataValue is byte[])
-                        {
-                            dataValueToStr = Convert.ToBase64String((byte[])dataValue);
-                        }
-                        Console.WriteLine("    {0} = {1}", fieldName, dataValueToStr);
-                    }
-
-
-                    
-                    if (++recIndex > 1) break;
+                    if (Convert.ToInt32(rec.DataValues[F_SECVAL]) == 3) { target = rec; break; }
                 }
+                if (target != null)
+                {
+                    var newValues = target.CloneDataValues();
+                    newValues[F_CHARVAL]  = "CHAR-updated";
+                    newValues[F_INTVAL]   = 999999;
+                    newValues[F_MONEYVAL] = 1234.56m;
+                    newValues[F_MEMOVAL]  = new MemoValue("updated memo text", (newValues[F_MEMOVAL] as MemoValue)?.BlobInfo);
+                    table.UpdateRecord(target, newValues);
+                }
+            }
+            SnapshotStep("harness", step, "update_secval3");
 
+            Console.WriteLine("=== [harness] Step {0:D2}: insert id=6 ===", ++step);
+            using (var table = new ParadoxTableFile(TestFolder, TableName))
+            {
+                var values = MakeSampleFieldValues(6, "insert6");
+                values[F_ID] = 6;
+                table.InsertRecord(values);
+            }
+            SnapshotStep("harness", step, "insert_id6");
 
+            Console.WriteLine("=== [harness] Step {0:D2}: delete secval=5 ===", ++step);
+            using (var table = new ParadoxTableFile(TestFolder, TableName))
+            {
+                ParadoxRecord target = null;
+                foreach (var rec in table.Enumerate())
+                {
+                    if (Convert.ToInt32(rec.DataValues[F_SECVAL]) == 5) { target = rec; break; }
+                }
+                if (target != null) table.DeleteRecord(target);
+            }
+            SnapshotStep("harness", step, "delete_secval5");
 
-
-
-                Console.WriteLine("-- press any key to continue --");
-                Console.ReadKey();
-                //Console.Clear();
-
-                //Console.WriteLine("Test 2: read 10 records by index (key range: 3 -> 4)");
-                //Console.WriteLine("==========================================================");
-
-                //using (var index = table.PrimaryKeyIndex)
-                //{
-                //    if (index != null)
-                //    {
-                //        var condition =
-                //            new ParadoxCondition.LogicalAnd(
-                //                new ParadoxCondition.Compare(ParadoxCompareOperator.GreaterOrEqual, 3, 0, 0),
-                //                new ParadoxCondition.Compare(ParadoxCompareOperator.LessOrEqual, 4, 0, 0));
-                //        var qry = index.Enumerate(condition);
-                //        using (var rdr = new ParadoxDataReader(table, qry))
-                //        {
-                //            recIndex = 1;
-                //            while (rdr.Read())
-                //            {
-                //                Console.WriteLine("Record #{0}", recIndex);
-                //                for (int i = 0; i < rdr.FieldCount; i++)
-                //                {
-                //                    Console.WriteLine("    {0} = {1}", rdr.GetName(i), rdr[i]);
-                //                }
-
-                //                if (++recIndex > 10) { break; }
-                //            }
-                //        }
-                //    }
-                //}
+            // The "verify" steps in SQLRunner-only mode had no ParadoxReader
+            // side; harness mode just re-snapshots the unchanged table at
+            // each corresponding step number so the two sequences line up
+            // 1:1 for comparison.
+            for (int verifyStep = 1; verifyStep <= 4; verifyStep++)
+            {
+                var names = new[] { "verify_update_noop", "verify_update_sentinel", "verify_insert_sentinel", "verify_delete_sentinel" };
+                Console.WriteLine("=== [harness] Step {0:D2}: {1} (no-op on harness side) ===", ++step, names[verifyStep - 1]);
+                SnapshotStep("harness", step, names[verifyStep - 1]);
             }
 
-            Console.WriteLine("-- press any key to continue --");
-            Console.ReadKey();
+            Console.WriteLine("[harness] Completed all {0} steps.", step);
+        }
 
+        /// <summary>
+        /// Builds a raw INSERT statement equivalent to MakeSampleFieldValues,
+        /// for use by RunSqlRunnerOnlyMode. AUTOINC (ID) is set explicitly so
+        /// both sequences end up with matching ID values.
+        /// </summary>
+        private static string BuildInsertSql(string tablePath, object[] v)
+        {
+            string Esc(string s) => s.Replace("'", "''");
+            var dateVal      = (DateTime)v[F_DATEVAL];
+            var timestampVal = (DateTime)v[F_TIMESTAMPVAL];
+            var timeVal      = (TimeSpan)v[F_TIMEVAL];
+
+            // Deliberately omit the AUTOINC (ID) column: explicitly setting
+            // it in an INSERT causes SQLRunner/BDE to silently no-op (report
+            // "Successfully executed" but not actually add the row - verified
+            // by checking the .DB header RecordCount before/after). AUTOINC
+            // must be left for BDE to assign, matching how ParadoxReader's
+            // AppendRecord auto-assigns IDs too.
+            return "INSERT INTO '" + tablePath + "' " +
+                "(SECVAL, INTVAL, DECVAL, NUMVAL, FLOATVAL, CHARVAL, VARCHARVAL, DATEVAL, BOOLVAL, TIMEVAL, TIMESTAMPVAL, MONEYVAL) VALUES (" +
+                v[F_SECVAL] + ", " +
+                v[F_INTVAL] + ", " +
+                Convert.ToDecimal(v[F_DECVAL]).ToString(System.Globalization.CultureInfo.InvariantCulture) + ", " +
+                Convert.ToDecimal(v[F_NUMVAL]).ToString(System.Globalization.CultureInfo.InvariantCulture) + ", " +
+                Convert.ToDouble(v[F_FLOATVAL]).ToString(System.Globalization.CultureInfo.InvariantCulture) + ", " +
+                "'" + Esc((string)v[F_CHARVAL]) + "', " +
+                "'" + Esc((string)v[F_VARCHARVAL]) + "', " +
+                "'" + dateVal.ToString("MM/dd/yyyy") + "', " +
+                ((bool)v[F_BOOLVAL] ? "TRUE" : "FALSE") + ", " +
+                "'" + timeVal.ToString(@"hh\:mm\:ss") + "', " +
+                "'" + timestampVal.ToString("MM/dd/yyyy HH:mm:ss") + "', " +
+                Convert.ToDecimal(v[F_MONEYVAL]).ToString(System.Globalization.CultureInfo.InvariantCulture) +
+                ")";
+        }
+
+        /// <summary>
+        /// Byte-compares the step snapshots captured by RunSqlRunnerOnlyMode
+        /// and RunHarnessOnlyMode (StepSnapshotRoot\sqlrunner vs \harness),
+        /// step-by-step, reporting the first step (if any) where the .DB/.MB
+        /// bytes diverge (ignoring known-volatile header bytes is NOT done
+        /// here - this is a raw diff so header change-counters will always
+        /// show as different; focus on whether the *data* differs).
+        /// </summary>
+        /// <summary>
+        /// Minimal decode of the well-understood .DB header fields (mirrors
+        /// ParadoxFile.ReadHeader's offsets) purely for diagnostic printing
+        /// during step comparison - does not touch/parse field defs.
+        /// </summary>
+        private class DbHeaderSnapshot
+        {
+            public ushort RecordSize;
+            public ushort HeaderSize;
+            public byte   FileType;
+            public byte   MaxTableSize;
+            public int    RecordCount;
+            public ushort NextBlock;
+            public ushort FileBlocks;
+            public ushort FirstBlock;
+            public ushort LastBlock;
+            public byte   ModifiedFlags1;
+            public byte   ChangeCount1;
+            public byte   ChangeCount2;
+            public int    AutoIncVal;
+            public byte   HasBlobFlag;
+
+            public static DbHeaderSnapshot Read(string path)
+            {
+                using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                using (var r = new BinaryReader(fs))
+                {
+                    var h = new DbHeaderSnapshot();
+                    h.RecordSize   = r.ReadUInt16(); // 0x00
+                    h.HeaderSize   = r.ReadUInt16(); // 0x02
+                    h.FileType     = r.ReadByte();   // 0x04
+                    h.MaxTableSize = r.ReadByte();   // 0x05
+                    h.RecordCount  = r.ReadInt32();  // 0x06
+                    h.NextBlock    = r.ReadUInt16(); // 0x0A
+                    h.FileBlocks   = r.ReadUInt16(); // 0x0C
+                    h.FirstBlock   = r.ReadUInt16(); // 0x0E
+                    h.LastBlock    = r.ReadUInt16(); // 0x10
+                    r.ReadUInt16();                  // 0x12 unknown12x13
+                    h.ModifiedFlags1 = r.ReadByte(); // 0x14
+
+                    fs.Position = 0x2D;
+                    h.ChangeCount1 = r.ReadByte();    // 0x2D
+                    h.ChangeCount2 = r.ReadByte();    // 0x2E
+
+                    fs.Position = 0x49;
+                    h.AutoIncVal = r.ReadInt32();     // 0x49
+
+                    fs.Position = 0x74;
+                    h.HasBlobFlag = r.ReadByte();      // 0x74
+
+                    return h;
+                }
+            }
+
+            public IEnumerable<string> DiffAgainst(DbHeaderSnapshot other)
+            {
+                if (RecordSize != other.RecordSize) yield return $"RecordSize: sr={RecordSize} h={other.RecordSize}";
+                if (HeaderSize != other.HeaderSize) yield return $"HeaderSize: sr={HeaderSize} h={other.HeaderSize}";
+                if (FileType != other.FileType) yield return $"FileType: sr={FileType} h={other.FileType}";
+                if (MaxTableSize != other.MaxTableSize) yield return $"MaxTableSize: sr={MaxTableSize} h={other.MaxTableSize}";
+                if (RecordCount != other.RecordCount) yield return $"RecordCount: sr={RecordCount} h={other.RecordCount}";
+                if (NextBlock != other.NextBlock) yield return $"NextBlock: sr={NextBlock} h={other.NextBlock}";
+                if (FileBlocks != other.FileBlocks) yield return $"FileBlocks: sr={FileBlocks} h={other.FileBlocks}";
+                if (FirstBlock != other.FirstBlock) yield return $"FirstBlock: sr={FirstBlock} h={other.FirstBlock}";
+                if (LastBlock != other.LastBlock) yield return $"LastBlock: sr={LastBlock} h={other.LastBlock}";
+                if (ModifiedFlags1 != other.ModifiedFlags1) yield return $"ModifiedFlags1: sr=0x{ModifiedFlags1:X2} h=0x{other.ModifiedFlags1:X2}";
+                if (ChangeCount1 != other.ChangeCount1) yield return $"ChangeCount1: sr={ChangeCount1} h={other.ChangeCount1}";
+                if (ChangeCount2 != other.ChangeCount2) yield return $"ChangeCount2: sr={ChangeCount2} h={other.ChangeCount2}";
+                if (AutoIncVal != other.AutoIncVal) yield return $"AutoIncVal: sr={AutoIncVal} h={other.AutoIncVal}";
+                if (HasBlobFlag != other.HasBlobFlag) yield return $"HasBlobFlag: sr={HasBlobFlag} h={other.HasBlobFlag}";
+            }
+        }
+
+        private static void CompareStepSnapshots()
+        {
+            var srDir = Path.Combine(StepSnapshotRoot, "sqlrunner");
+            var hDir  = Path.Combine(StepSnapshotRoot, "harness");
+
+            if (!Directory.Exists(srDir) || !Directory.Exists(hDir))
+            {
+                Console.WriteLine("Missing snapshot directories. Run 'sqlrunnermode' and 'harnessmode' first.");
+                Console.WriteLine("  sqlrunner dir exists: {0} ({1})", Directory.Exists(srDir), srDir);
+                Console.WriteLine("  harness dir exists:   {0} ({1})", Directory.Exists(hDir), hDir);
+                return;
+            }
+
+            // Match files by step-number prefix + extension (e.g. "08_" + ".DB")
+            // rather than exact filename, since the two modes' step labels can
+            // legitimately differ in wording (e.g. sqlrunner's
+            // "08_insert_secval6.DB" vs harness's "08_insert_id6.DB") while
+            // still representing the same logical step.
+            string StepKey(string fileName)
+            {
+                var name = Path.GetFileNameWithoutExtension(fileName);
+                var ext  = Path.GetExtension(fileName);
+                var underscoreIdx = name.IndexOf('_');
+                var prefix = underscoreIdx >= 0 ? name.Substring(0, underscoreIdx) : name;
+                return prefix + ext;
+            }
+
+            var srFiles = Directory.GetFiles(srDir).Select(Path.GetFileName).ToList();
+            var hFiles  = Directory.GetFiles(hDir).Select(Path.GetFileName).ToList();
+
+            var srByKey = srFiles.GroupBy(StepKey).ToDictionary(g => g.Key, g => g.First());
+            var hByKey  = hFiles.GroupBy(StepKey).ToDictionary(g => g.Key, g => g.First());
+
+            var allKeys = srByKey.Keys.Union(hByKey.Keys).OrderBy(k => k, StringComparer.Ordinal).ToList();
+
+            bool anyDiff = false;
+            foreach (var key in allKeys)
+            {
+                if (!srByKey.TryGetValue(key, out var srName)) { Console.WriteLine("[{0}] MISSING on sqlrunner side", key); anyDiff = true; continue; }
+                if (!hByKey.TryGetValue(key, out var hName))   { Console.WriteLine("[{0}] MISSING on harness side", key); anyDiff = true; continue; }
+
+                var name = srName == hName ? srName : $"{srName} <-> {hName}";
+                var srPath = Path.Combine(srDir, srName);
+                var hPath  = Path.Combine(hDir, hName);
+
+                var srBytes = File.ReadAllBytes(srPath);
+                var hBytes  = File.ReadAllBytes(hPath);
+
+                if (srBytes.Length != hBytes.Length)
+                {
+                    Console.WriteLine("[{0}] SIZE MISMATCH: sqlrunner={1} bytes, harness={2} bytes", name, srBytes.Length, hBytes.Length);
+                    anyDiff = true;
+
+                    if (name.EndsWith(".DB", StringComparison.OrdinalIgnoreCase))
+                    {
+                        try
+                        {
+                            var srHdr = DbHeaderSnapshot.Read(srPath);
+                            var hHdr  = DbHeaderSnapshot.Read(hPath);
+                            foreach (var d in srHdr.DiffAgainst(hHdr))
+                                Console.WriteLine("    header diff: {0}", d);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine("    [warn] could not decode headers: {0}", ex.Message);
+                        }
+                    }
+                    continue;
+                }
+
+                var diffOffsets = new List<int>();
+                for (int i = 0; i < srBytes.Length; i++)
+                {
+                    if (srBytes[i] != hBytes[i]) diffOffsets.Add(i);
+                }
+
+                if (diffOffsets.Count == 0)
+                {
+                    Console.WriteLine("[{0}] MATCH ({1} bytes)", name, srBytes.Length);
+                }
+                else
+                {
+                    // Some header bytes are known to hold raw in-memory
+                    // pointer values from whichever process last wrote the
+                    // file (BDE/SQLRunner vs. ParadoxReader), not persisted
+                    // table state, so they are expected to differ between
+                    // the two engines even when the actual table state is
+                    // identical: unknown12x13 (0x12-0x13), unknownPtr1A /
+                    // pointer (0x1A-0x1D), tableNamePtrPtr (0x30-0x33),
+                    // fldInfoPtr (0x34-0x37). Filter those out to see if any
+                    // *meaningful* bytes differ underneath.
+                    bool IsKnownVolatile(int offset) =>
+                        (offset >= 0x12 && offset <= 0x13) ||
+                        (offset >= 0x1A && offset <= 0x1D) ||
+                        (offset >= 0x30 && offset <= 0x33) ||
+                        (offset >= 0x34 && offset <= 0x37);
+
+                    var meaningfulOffsets = name.EndsWith(".DB", StringComparison.OrdinalIgnoreCase)
+                        ? diffOffsets.Where(o => !IsKnownVolatile(o)).ToList()
+                        : diffOffsets;
+
+                    anyDiff = true;
+                    var first = diffOffsets.Take(10).Select(o => $"0x{o:X} (sr={srBytes[o]:X2} h={hBytes[o]:X2})");
+                    Console.WriteLine("[{0}] DIFF: {1} byte(s) differ ({2} after filtering known-volatile pointer bytes). First offsets: {3}{4}",
+                        name, diffOffsets.Count, meaningfulOffsets.Count, string.Join(", ", first), diffOffsets.Count > 10 ? ", ..." : "");
+
+                    if (meaningfulOffsets.Count > 0 && meaningfulOffsets.Count != diffOffsets.Count)
+                    {
+                        var firstMeaningful = meaningfulOffsets.Take(10).Select(o => $"0x{o:X} (sr={srBytes[o]:X2} h={hBytes[o]:X2})");
+                        Console.WriteLine("    meaningful (non-pointer) offsets: {0}{1}",
+                            string.Join(", ", firstMeaningful), meaningfulOffsets.Count > 10 ? ", ..." : "");
+                    }
+
+                    if (name.EndsWith(".DB", StringComparison.OrdinalIgnoreCase))
+                    {
+                        try
+                        {
+                            var srHdr = DbHeaderSnapshot.Read(srPath);
+                            var hHdr  = DbHeaderSnapshot.Read(hPath);
+                            var headerDiffs = srHdr.DiffAgainst(hHdr).ToList();
+                            if (headerDiffs.Count == 0)
+                                Console.WriteLine("    header fields match; diff is confined to record/data area.");
+                            else
+                                foreach (var d in headerDiffs)
+                                    Console.WriteLine("    header diff: {0}", d);
+                        }
+                        catch (Exception ex)
+                        {
+                            Console.WriteLine("    [warn] could not decode headers: {0}", ex.Message);
+                        }
+                    }
+                }
+            }
+
+            Console.WriteLine();
+            Console.WriteLine(anyDiff ? "Comparison complete: differences found (see above)." : "Comparison complete: all matched files are byte-identical.");
+        }
+
+        // --------------------------------------------------------------------
+        // Setup
+        // --------------------------------------------------------------------
+
+        /// <summary>
+        /// Wipes and recreates c:\temp\paradoxtest, then copies a fresh copy of
+        /// TESTTAB.DB (and its associated .PX/.MB/.XG0/.YG0 files) from the
+        /// build output's data folder, so every run starts from a known state.
+        /// </summary>
+        private static void ResetTestFolder()
+        {
+            Directory.CreateDirectory(TestFolder);
+
+            // Clear stale *.LCK files left behind by a prior SQLRunner/BDE
+            // session (e.g. PDOXUSRS.LCK) before touching anything else.
+            DeleteStaleLockFiles();
+
+            // Delete individual table/index/blob files rather than the whole
+            // directory: BDE (via SQLRunner) leaves behind a PDOXUSRS.LCK
+            // network-lock placeholder file in the folder that can't always be
+            // removed immediately, so a recursive directory delete can fail.
+            var tableBaseName = Path.GetFileNameWithoutExtension(TableName);
+            foreach (var existingFile in Directory.GetFiles(TestFolder, tableBaseName + ".*"))
+            {
+                try { File.Delete(existingFile); } catch { /* best effort */ }
+            }
+
+            foreach (var sourceFile in Directory.GetFiles(SourceDataFolder, tableBaseName + ".*"))
+            {
+                var destFile = Path.Combine(TestFolder, Path.GetFileName(sourceFile));
+                File.Copy(sourceFile, destFile, overwrite: true);
+            }
+
+            Console.WriteLine("Test folder reset: {0}", TestFolder);
+        }
+
+        private static object[] MakeSampleFieldValues(short secVal, string label)
+        {
+            // Kept intentionally simple (small integers, 2-decimal-place
+            // money/decimal/numeric values) to make byte-for-byte comparison
+            // against SQLRunner/BDE output easier to reason about.
+            var values = new object[15];
+            values[F_ID]           = null; // AUTOINC - assigned automatically by AppendRecord
+            values[F_SECVAL]       = secVal;
+            values[F_INTVAL]       = 100 + secVal;
+            values[F_DECVAL]       = Math.Round(10m + secVal, 2);
+            values[F_NUMVAL]       = Math.Round(20m + secVal, 2);
+            values[F_FLOATVAL]     = Math.Round(1.5d + secVal, 2);
+            values[F_CHARVAL]      = "CHAR-" + label;
+            values[F_VARCHARVAL]   = "VARCHAR-" + label;
+            values[F_DATEVAL]      = new DateTime(2026, 1, 1).AddDays(secVal);
+            values[F_BOOLVAL]      = secVal % 2 == 0;
+            values[F_MEMOVAL]      = new MemoValue("memo text for " + label, null);
+            values[F_TIMEVAL]      = new TimeSpan(1, 2, 3);
+            values[F_TIMESTAMPVAL] = new DateTime(2026, 1, 1, 12, 0, 0).AddMinutes(secVal);
+            values[F_MONEYVAL]     = Math.Round(100m + secVal, 2);
+            values[F_BYTESVAL]     = new byte[] { (byte)secVal, 1, 2, 3, 4, 5, 6, 7, 8, 9 };
+            return values;
+        }
+
+        // --------------------------------------------------------------------
+        // Test 1: Append
+        // --------------------------------------------------------------------
+
+        private static void TestAppendRecords()
+        {
+            using (var table = new ParadoxTableFile(TestFolder, TableName))
+            {
+                for (short i = 1; i <= 5; i++)
+                {
+                    var values = MakeSampleFieldValues(i, "append" + i);
+                    var rec    = table.AppendRecord(values);
+                    Console.WriteLine("Appended record: block={0} idx={1} id={2} secval={3}",
+                        rec.BlockNumber, rec.RecordIndex, rec.DataValues[F_ID], rec.DataValues[F_SECVAL]);
+                }
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // Test 2: Update
+        // --------------------------------------------------------------------
+
+        private static void TestUpdateRecord()
+        {
+            using (var table = new ParadoxTableFile(TestFolder, TableName))
+            {
+                ParadoxRecord target = null;
+                foreach (var rec in table.Enumerate())
+                {
+                    if (Convert.ToInt32(rec.DataValues[F_SECVAL]) == 3)
+                    {
+                        target = rec;
+                        break;
+                    }
+                }
+
+                if (target == null)
+                {
+                    Console.WriteLine("No record with SECVAL=3 found to update.");
+                    return;
+                }
+
+                var newValues = target.CloneDataValues();
+                newValues[F_CHARVAL]    = "CHAR-updated";
+                newValues[F_INTVAL]     = 999999;
+                newValues[F_MONEYVAL]   = 1234.56m;
+                newValues[F_MEMOVAL]    = new MemoValue("updated memo text", (newValues[F_MEMOVAL] as MemoValue)?.BlobInfo);
+
+                table.UpdateRecord(target, newValues);
+                Console.WriteLine("Updated record id={0} (secval=3): charval={1}, intval={2}",
+                    newValues[F_ID], newValues[F_CHARVAL], newValues[F_INTVAL]);
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // Test 3: Insert
+        // --------------------------------------------------------------------
+
+        private static void TestInsertRecord()
+        {
+            using (var table = new ParadoxTableFile(TestFolder, TableName))
+            {
+                var values = MakeSampleFieldValues(6, "insert6");
+                values[F_ID] = 6; // InsertRecord does not auto-assign AUTOINC
+                var rec = table.InsertRecord(values);
+                Console.WriteLine("Inserted record: block={0} idx={1} id={2} secval={3}",
+                    rec.BlockNumber, rec.RecordIndex, rec.DataValues[F_ID], rec.DataValues[F_SECVAL]);
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // Test 4: Delete
+        // --------------------------------------------------------------------
+
+        private static void TestDeleteRecord()
+        {
+            using (var table = new ParadoxTableFile(TestFolder, TableName))
+            {
+                ParadoxRecord target = null;
+                foreach (var rec in table.Enumerate())
+                {
+                    if (Convert.ToInt32(rec.DataValues[F_SECVAL]) == 5)
+                    {
+                        target = rec;
+                        break;
+                    }
+                }
+
+                if (target == null)
+                {
+                    Console.WriteLine("No record with SECVAL=5 found to delete.");
+                    return;
+                }
+
+                table.DeleteRecord(target);
+                Console.WriteLine("Deleted record id={0} (secval=5)", target.DataValues[F_ID]);
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // Test 5: Read back
+        // --------------------------------------------------------------------
+
+        private static void TestReadAllRecords()
+        {
+            using (var table = new ParadoxTableFile(TestFolder, TableName))
+            {
+                int count = 0;
+                foreach (var rec in table.Enumerate())
+                {
+                    count++;
+                    Console.WriteLine("Record #{0}: id={1} secval={2} charval={3} intval={4} moneyval={5}",
+                        count,
+                        rec.DataValues[F_ID],
+                        rec.DataValues[F_SECVAL],
+                        rec.DataValues[F_CHARVAL],
+                        rec.DataValues[F_INTVAL],
+                        rec.DataValues[F_MONEYVAL]);
+                }
+                Console.WriteLine("Total records: {0}", count);
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // Test 5b: ParadoxCondition-driven primary key (.PX) index lookup,
+        // read via ParadoxDataReader (IDataReader), matching the pattern used
+        // in an earlier version of this codebase:
+        //
+        //     using (var index = table.PrimaryKeyIndex)
+        //     {
+        //         var condition = new ParadoxCondition.LogicalAnd(...);
+        //         var qry = index.Enumerate(condition);
+        //         using (var rdr = new ParadoxDataReader(table, qry))
+        //         {
+        //             while (rdr.Read()) { ... }
+        //         }
+        //     }
+        //
+        // Note: PrimaryKeyIndex is owned/disposed by ParadoxTableFile itself
+        // (see ParadoxTableFile.Dispose), so it is not re-wrapped in its own
+        // "using" here.
+        //
+        // NOTE: secondary index (.Xnn/.Xgn/.Ynn/.Ygn) lookups follow the same
+        // pattern but through table.SecondaryIndexes[n].Enumerate(condition) -
+        // see TestConditionSecondaryIndexLookup below.
+        // --------------------------------------------------------------------
+
+        private static void TestConditionIndexLookup()
+        {
+            using (var table = new ParadoxTableFile(TestFolder, TableName))
+            {
+                var index = table.PrimaryKeyIndex;
+                if (index == null)
+                {
+                    Console.WriteLine("  [skip] No .PX file open for this table; cannot test index lookup.");
+                    return;
+                }
+
+                // ID (F_ID) is the primary key field, so a range condition on
+                // it can be evaluated against the .PX index directly.
+                var condition =
+                    new ParadoxCondition.LogicalAnd(
+                        new ParadoxCondition.Compare(ParadoxCompareOperator.GreaterOrEqual, 2, F_ID, 0),
+                        new ParadoxCondition.Compare(ParadoxCompareOperator.LessOrEqual, 4, F_ID, 0));
+
+                var qry = index.Enumerate(condition);
+                int recIndex = 1;
+                using (var rdr = new ParadoxDataReader(table, qry))
+                {
+                    while (rdr.Read())
+                    {
+                        Console.WriteLine("Record #{0}", recIndex);
+                        for (int i = 0; i < rdr.FieldCount; i++)
+                        {
+                            Console.WriteLine("    {0} = {1}", rdr.GetName(i), rdr[i]);
+                        }
+
+                        if (++recIndex > 10) { break; }
+                    }
+                }
+                Console.WriteLine("  (2 <= ID <= 4) matched {0} record(s) via .PX index lookup.", recIndex - 1);
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // Test 5c: Condition + secondary index lookup
+        // --------------------------------------------------------------------
+
+        /// <summary>
+        /// Mirrors <see cref="TestConditionIndexLookup"/> but exercises a
+        /// secondary index (.Xnn/.Xgn) via <see cref="SecondaryIndexHandle.Enumerate"/>,
+        /// using SECVAL (the field covered by the SECIDX secondary index)
+        /// instead of the primary key.
+        /// </summary>
+        private static void TestConditionSecondaryIndexLookup()
+        {
+            using (var table = new ParadoxTableFile(TestFolder, TableName))
+            {
+                if (table.SecondaryIndexes.Count == 0)
+                {
+                    Console.WriteLine("  [skip] No secondary index files open for this table; cannot test index lookup.");
+                    return;
+                }
+
+                var index = table.SecondaryIndexes[0];
+
+                // The index's composed key layout may differ from the parent
+                // table's field layout, so map F_SECVAL's table position to
+                // its position within this index's own key via FieldIndices.
+                int secValIndexPos = Array.IndexOf(index.FieldIndices, F_SECVAL);
+                if (secValIndexPos < 0)
+                {
+                    Console.WriteLine("  [skip] SECVAL is not covered by the first secondary index ({0}); cannot test index lookup.", index.FilePath);
+                    return;
+                }
+
+                var condition =
+                    new ParadoxCondition.LogicalAnd(
+                        new ParadoxCondition.Compare(ParadoxCompareOperator.GreaterOrEqual, (short)2, F_SECVAL, secValIndexPos),
+                        new ParadoxCondition.Compare(ParadoxCompareOperator.LessOrEqual, (short)4, F_SECVAL, secValIndexPos));
+
+                var qry = index.Enumerate(condition);
+                int recIndex = 1;
+                using (var rdr = new ParadoxDataReader(table, qry))
+                {
+                    while (rdr.Read())
+                    {
+                        Console.WriteLine("Record #{0}", recIndex);
+                        for (int i = 0; i < rdr.FieldCount; i++)
+                        {
+                            Console.WriteLine("    {0} = {1}", rdr.GetName(i), rdr[i]);
+                        }
+
+                        if (++recIndex > 10) { break; }
+                    }
+                }
+                Console.WriteLine("  (2 <= SECVAL <= 4) matched {0} record(s) via {1} secondary index lookup.", recIndex - 1, Path.GetFileName(index.FilePath));
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // Test 6: Cross-check with SQLRunner
+        // --------------------------------------------------------------------
+
+        /// <summary>
+        /// Runs BDE Local SQL statements through SQLRunner against the same
+        /// table that ParadoxReader just wrote to, to independently confirm
+        /// BDE can open/parse the table (and thus that the .DB/.PX files are
+        /// structurally valid) after our write-path changes.
+        ///
+        /// NOTE: SQLRunner only supports UPDATE/INSERT/DELETE/CREATE queries
+        /// (its own /? help confirms SELECT is rejected as "Invalid Query"),
+        /// so verification here uses harmless UPDATE/INSERT/DELETE statements
+        /// against sentinel values that don't match any real row. If BDE can
+        /// open and execute these without reporting corruption, the table is
+        /// structurally sound from BDE's point of view.
+        /// </summary>
+        private static void TestVerifyWithSqlRunner()
+        {
+            if (!File.Exists(SqlRunnerExePath))
+            {
+                Console.WriteLine("SQLRunner not found at {0}; skipping BDE verification.", SqlRunnerExePath);
+                return;
+            }
+
+            var tablePath = Path.Combine(TestFolder, TableName);
+
+            // Touches zero rows (no ID = -999999) but forces BDE to open, parse,
+            // and use the .PX index to seek - validating header/index integrity.
+            RunSqlRunner($"UPDATE '{tablePath}' T SET T.'CHARVAL' = T.'CHARVAL' WHERE T.'ID' = -999999");
+
+            // SECVAL is SMALLINT (range -32768..32767) - a sentinel outside that
+            // range (e.g. -999999) causes BDE/SQLRunner to hang rather than
+            // return "no rows found", so use an in-range sentinel instead.
+            RunSqlRunner($"UPDATE '{tablePath}' T SET T.'INTVAL' = T.'INTVAL' WHERE T.'SECVAL' = -32000");
+
+            // Round-trip: insert then delete a throwaway row via BDE itself.
+            RunSqlRunner($"INSERT INTO '{tablePath}' (SECVAL) VALUES (-1)");
+            RunSqlRunner($"DELETE FROM '{tablePath}' T WHERE T.'SECVAL' = -1");
+        }
+
+        private static void RunSqlRunner(string sql)
+        {
+            Console.WriteLine("SQLRunner> {0}", sql);
+
+            // Guarantee a clean starting state before every single invocation:
+            // kill any lingering SQLRunner process (a prior call may have
+            // hung and been force-killed, or a stray instance may still be
+            // shutting down) and remove all *.LCK files, then verify both
+            // are actually gone before we start a new process. Without this,
+            // multiple SQLRunner instances can pile up concurrently and
+            // fight over the same locks, which is its own source of hangs.
+            EnsureNoSqlRunnerProcessesRunning();
+            DeleteStaleLockFilesWithRetry();
+
+            var remainingLocks = Directory.GetFiles(TestFolder, "*.LCK");
+            if (remainingLocks.Length > 0)
+            {
+                Console.WriteLine("  [warn] {0} lock file(s) still present before launch: {1}",
+                    remainingLocks.Length, string.Join(", ", remainingLocks.Select(Path.GetFileName)));
+            }
+
+            var psi = new ProcessStartInfo
+            {
+                FileName               = SqlRunnerExePath,
+                Arguments              = $"/S \"{sql}\"",
+                UseShellExecute        = false,
+                RedirectStandardInput  = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError  = true,
+                CreateNoWindow         = true
+            };
+
+            var stdoutBuilder = new System.Text.StringBuilder();
+            var stderrBuilder = new System.Text.StringBuilder();
+
+            using (var process = new Process { StartInfo = psi, EnableRaisingEvents = true })
+            {
+                process.OutputDataReceived += (s, e) => { if (e.Data != null) stdoutBuilder.AppendLine(e.Data); };
+                process.ErrorDataReceived  += (s, e) => { if (e.Data != null) stderrBuilder.AppendLine(e.Data); };
+
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+
+                // SQLRunner's /S flag appears to suppress the confirmation
+                // prompt only for INSERT; UPDATE/DELETE still print
+                // "Please ensure you have a Backup." and then wait on stdin
+                // for an ENTER keypress before proceeding, which our
+                // redirected (non-interactive) stdin never provides. Feed a
+                // single newline proactively so it doesn't block waiting for
+                // input that will never come.
+                try
+                {
+                    process.StandardInput.WriteLine();
+                    process.StandardInput.Flush();
+                }
+                catch { /* process may have already exited or not be waiting on stdin */ }
+
+                // Per user instruction: treat SQLRunner as locked-up if it
+                // hasn't exited within ~10 seconds, rather than waiting 30s.
+                // This is our hang detector - a real "problem state", not a
+                // slow-but-working call.
+                if (!process.WaitForExit(10000))
+                {
+                    Console.WriteLine("  [warn] SQLRunner did not exit within 10s; treating as HUNG. Killing process.");
+                    KillProcessTree(process);
+                    process.WaitForExit();
+                }
+
+                string stdout = stdoutBuilder.ToString();
+                string stderr = stderrBuilder.ToString();
+
+                if (!string.IsNullOrWhiteSpace(stdout))
+                    Console.WriteLine(stdout.Trim());
+                if (!string.IsNullOrWhiteSpace(stderr))
+                    Console.WriteLine("  [stderr] " + stderr.Trim());
+            }
+
+            // BDE can hold onto its file handles / PDOXUSRS.LCK briefly after
+            // the SQLRunner process itself has exited (e.g. while its BDE
+            // session/engine shuts down). Give it a moment before we attempt
+            // to touch the table or its lock files again, otherwise a
+            // following ParadoxTableFile open (or another SQLRunner call)
+            // can race BDE's own cleanup and see a "table is busy" state.
+            System.Threading.Thread.Sleep(500);
+
+            // Clean up any lock file SQLRunner itself left behind, so the next
+            // invocation (or a subsequent ParadoxTableFile open) doesn't see a
+            // stale lock. Retry with backoff since BDE may still be releasing
+            // the handle for a short time after the process exits.
+            DeleteStaleLockFilesWithRetry();
+        }
+
+        /// <summary>
+        /// Deletes any *.LCK files in the test folder, retrying briefly if a
+        /// file is still in use (BDE can hold the handle open for a short
+        /// time after SQLRunner's process has exited).
+        /// </summary>
+        private static void DeleteStaleLockFilesWithRetry(int maxAttempts = 5, int delayMs = 250)
+        {
+            for (int attempt = 1; attempt <= maxAttempts; attempt++)
+            {
+                var remaining = Directory.GetFiles(TestFolder, "*.LCK");
+                if (remaining.Length == 0) return;
+
+                bool anyFailed = false;
+                foreach (var lockFile in remaining)
+                {
+                    try { File.Delete(lockFile); }
+                    catch (Exception ex)
+                    {
+                        anyFailed = true;
+                        if (attempt == maxAttempts)
+                            Console.WriteLine("  [warn] Could not delete {0} after {1} attempts: {2}", lockFile, maxAttempts, ex.Message);
+                    }
+                }
+
+                if (!anyFailed) return;
+                System.Threading.Thread.Sleep(delayMs);
+            }
+        }
+
+
+        /// <summary>
+        /// Deletes any *.LCK files in the test folder. Safe to call before/after
+        /// SQLRunner runs, provided no SQLRunner (or ParadoxTableFile) process
+        /// is currently using the table concurrently.
+        /// </summary>
+        private static void DeleteStaleLockFiles()
+        {
+            foreach (var lockFile in Directory.GetFiles(TestFolder, "*.LCK"))
+            {
+                try { File.Delete(lockFile); }
+                catch (Exception ex) { Console.WriteLine("  [warn] Could not delete {0}: {1}", lockFile, ex.Message); }
+            }
+        }
+
+        /// <summary>
+        /// Guarantees no SQLRunner process is left running before we launch a
+        /// new one. A previous invocation that hung and was force-killed can,
+        /// in rare cases, leave a still-shutting-down instance behind (or a
+        /// completely separate stray instance from an earlier crashed run of
+        /// this harness). Running multiple SQLRunner/BDE instances
+        /// concurrently against the same table is itself a reliable way to
+        /// cause locking problems, so this must be checked/cleared before
+        /// every single RunSqlRunner call, not just once at startup.
+        /// </summary>
+        private static void EnsureNoSqlRunnerProcessesRunning()
+        {
+            var exeName = Path.GetFileNameWithoutExtension(SqlRunnerExePath);
+            var stray = Process.GetProcessesByName(exeName);
+            if (stray.Length == 0) return;
+
+            Console.WriteLine("  [warn] {0} stray SQLRunner process(es) found before launch (PIDs: {1}); killing.",
+                stray.Length, string.Join(", ", stray.Select(p => p.Id)));
+
+            foreach (var p in stray)
+            {
+                try { KillProcessTree(p); }
+                catch (Exception ex) { Console.WriteLine("  [warn] Failed to kill PID {0}: {1}", p.Id, ex.Message); }
+                finally { p.Dispose(); }
+            }
+
+            // Give the OS a moment to fully tear down the killed process(es)
+            // before we go on to check/delete lock files.
+            System.Threading.Thread.Sleep(500);
+
+            var stillRunning = Process.GetProcessesByName(exeName);
+            if (stillRunning.Length > 0)
+            {
+                Console.WriteLine("  [warn] {0} SQLRunner process(es) still running after kill attempt (PIDs: {1}).",
+                    stillRunning.Length, string.Join(", ", stillRunning.Select(p => p.Id)));
+                foreach (var p in stillRunning) p.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Kills a process and any child processes it may have spawned
+        /// (taskkill /T), rather than relying on Process.Kill() alone, which
+        /// only kills the immediate process and can leave children running.
+        /// </summary>
+        private static void KillProcessTree(Process process)
+        {
+            try
+            {
+                using (var killer = new Process())
+                {
+                    killer.StartInfo = new ProcessStartInfo
+                    {
+                        FileName        = "taskkill",
+                        Arguments       = $"/PID {process.Id} /T /F",
+                        UseShellExecute = false,
+                        CreateNoWindow  = true,
+                        RedirectStandardOutput = true,
+                        RedirectStandardError  = true
+                    };
+                    killer.Start();
+                    killer.WaitForExit(5000);
+                }
+            }
+            catch { /* fall back to direct kill below */ }
+
+            try { if (!process.HasExited) process.Kill(); } catch { /* best effort */ }
         }
     }
 }
