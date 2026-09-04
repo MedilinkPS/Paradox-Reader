@@ -375,23 +375,35 @@ namespace ParadoxReader
 
             // Paradox blocks only chain forward (NextBlock) — no back-pointer
             // exists, so walk forward from the first block looking for room.
+            // Like firstBlock/lastBlock/nextBlock in the file header, a
+            // block's own NextBlock field is 1-based (0 = none/end of chain),
+            // NOT the raw 0-based BlockNumber, so it must be converted before
+            // use as a physical block index.
             ushort current = firstBlock0Based;
             while (current != lastBlock0Based)
             {
                 DbBlock block = blockManager.ReadBlock(current);
                 if (block.HasRoom) return block;
-                current = block.NextBlock;
+                current = (ushort)(block.NextBlock - 1);
             }
 
             // All blocks are full — allocate a new last block
             DbBlock newBlock = blockManager.AllocateBlock();
 
-            // Link old last → new block
+            // Link old last → new block (1-based, matching the NextBlock
+            // convention described above)
             DbBlock oldLast = blockManager.ReadBlock(lastBlock0Based);
-            oldLast.NextBlock = newBlock.BlockNumber;
+            oldLast.NextBlock = (ushort)(newBlock.BlockNumber + 1);
             blockManager.WriteBlock(oldLast);
 
+            // nextBlock must track the most-recently-allocated (i.e. now
+            // last) block, same as lastBlock, or BDE sees a stale value and
+            // considers the table corrupt/inconsistent. Confirmed against a
+            // real BDE/SQLRunner-written table: after a block split,
+            // nextBlock == lastBlock, whereas leaving nextBlock at its
+            // original single-block value diverges from BDE's own output.
             lastBlock  = (ushort)(newBlock.BlockNumber + 1); // header stores 1-based
+            nextBlock  = lastBlock;
             fileBlocks = (ushort)(fileBlocks + 1);
             WriteBlockHeadersToFileHeader();
 

@@ -103,7 +103,7 @@ namespace ParadoxReader
                              : value is DateTime dt ? DateTimeToParadoxTimestamp(dt)
                              : Convert.ToDouble(value);
                     byte[] bytes = BitConverter.GetBytes(v);
-                    BinaryReaderWriterPdoxExtensions.ConvertBytesForDouble(bytes, 8, false);
+                    BinaryReaderWriterPdoxExtensions.ConvertBytesForDouble(bytes, 8, inverse: true);
                     w.Write(bytes);
                     break;
                 }
@@ -115,7 +115,7 @@ namespace ParadoxReader
                              : value is double d ? d
                              : Convert.ToDouble(value);
                     byte[] bytes = BitConverter.GetBytes(v);
-                    BinaryReaderWriterPdoxExtensions.ConvertBytesForDouble(bytes, 8, false);
+                    BinaryReaderWriterPdoxExtensions.ConvertBytesForDouble(bytes, 8, inverse: true);
                     w.Write(bytes);
                     break;
                 }
