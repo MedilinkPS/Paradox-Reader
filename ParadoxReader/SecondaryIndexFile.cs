@@ -42,12 +42,28 @@ namespace ParadoxReader
         // XgnFile types use 0-based block numbers; all others (YgnFile, XnnFile) use 1-based.
         private readonly ushort      blockBase;
 
+        /// <summary>
+        /// Full path to the underlying .Xnn/.Xgn/.Ynn/.Ygn index file.
+        /// </summary>
+        public string FilePath { get; }
+
+        /// <summary>
+        /// 0-based field positions in the parent table that this index's
+        /// composed key covers, in key order (indexed field(s) followed by
+        /// appended primary-key field(s)). Use these positions - not the
+        /// parent table's own field positions - when building a
+        /// <see cref="ParadoxCondition.Compare"/>'s IndexFieldIndex for use
+        /// with <see cref="Enumerate"/>.
+        /// </summary>
+        public int[] FieldIndices => fieldIndices;
+
         // ----------------------------------------------------------------
         // Constructor
         // ----------------------------------------------------------------
 
-        public SecondaryIndexFile(string indexFilePath, ParadoxFile.FieldInfo[] indexedFields, int[] fieldIndices)
+        internal SecondaryIndexFile(string indexFilePath, ParadoxFile.FieldInfo[] indexedFields, int[] fieldIndices)
         {
+            FilePath           = indexFilePath;
             this.indexedFields = indexedFields;
             this.fieldIndices  = fieldIndices;
 
@@ -124,6 +140,86 @@ namespace ParadoxReader
 
             BTreeInsert(new PxEntry(keyData, blockNumber, (ushort)recordCount));
             UpdateRecordCount(indexFile.RecordCount + 1);
+        }
+
+        /// <summary>
+        /// Traverses this secondary index's B-tree to find matching records
+        /// in the parent .DB table, analogous to
+        /// <see cref="ParadoxPrimaryKey.Enumerate(ParadoxCondition)"/> for
+        /// the primary (.PX) index. <paramref name="condition"/>'s
+        /// <see cref="ParadoxCondition.Compare.IndexFieldIndex"/> must refer
+        /// to the position of the target field within this index's own
+        /// composed key (see <see cref="FieldIndices"/>), not its position
+        /// in the parent table.
+        /// </summary>
+        /// <param name="condition">Condition used both to prune index branches (IsIndexPossible) and to filter matching rows (IsDataOk).</param>
+        /// <param name="table">The parent .DB table file, used to read the data blocks referenced by leaf entries.</param>
+        public IEnumerable<ParadoxReader.ParadoxRecord> Enumerate(ParadoxCondition condition, ParadoxFile table)
+        {
+            if (indexFile.stream.Length <= indexFile.headerSize) yield break;
+
+            foreach (var rec in EnumerateNode(ReadBlock(indexFile.pxRootBlockId), condition, table))
+                yield return rec;
+        }
+
+        private IEnumerable<ParadoxReader.ParadoxRecord> EnumerateNode(
+            PxBlock node, ParadoxCondition condition, ParadoxFile table)
+        {
+            if (node.IsLeaf)
+            {
+                for (int i = 0; i < node.Entries.Count; i++)
+                {
+                    var entry    = node.Entries[i];
+                    var nextEntry = i < node.Entries.Count - 1 ? node.Entries[i + 1] : null;
+                    var indexRec = BuildSyntheticRecord(entry);
+                    var nextRec  = nextEntry != null ? BuildSyntheticRecord(nextEntry) : null;
+
+                    if (!condition.IsIndexPossible(indexRec, nextRec)) continue;
+
+                    var block = table.GetBlock(entry.BlockNumber);
+                    for (int r = 0; r < block.RecordCount; r++)
+                    {
+                        var rec = block[r];
+                        if (condition.IsDataOk(rec)) yield return rec;
+                    }
+                }
+                yield break;
+            }
+
+            // Branch node: the leftmost subtree (LeftChildBlockNumber) has no
+            // entry of its own to prune against here, so it is always
+            // descended into; pruning still applies within its leaves/sub-branches.
+            if (node.LeftChildBlockNumber != 0)
+            {
+                foreach (var rec in EnumerateNode(ReadBlock(node.LeftChildBlockNumber), condition, table))
+                    yield return rec;
+            }
+
+            for (int i = 0; i < node.Entries.Count; i++)
+            {
+                var entry     = node.Entries[i];
+                var nextEntry = i < node.Entries.Count - 1 ? node.Entries[i + 1] : null;
+                var indexRec  = BuildSyntheticRecord(entry);
+                var nextRec   = nextEntry != null ? BuildSyntheticRecord(nextEntry) : null;
+
+                if (!condition.IsIndexPossible(indexRec, nextRec)) continue;
+
+                foreach (var rec in EnumerateNode(ReadBlock(entry.BlockNumber), condition, table))
+                    yield return rec;
+            }
+        }
+
+        /// <summary>
+        /// Builds a synthetic <see cref="ParadoxRecord"/> from a B-tree leaf/
+        /// branch entry's key data, so <see cref="ParadoxCondition"/> can
+        /// evaluate it via the same DataValues-indexed API used for real
+        /// table rows. Values are ordered per this index's composed key
+        /// (see <see cref="FieldIndices"/>), not the parent table's layout.
+        /// </summary>
+        private ParadoxReader.ParadoxRecord BuildSyntheticRecord(PxEntry entry)
+        {
+            var values = KeySerializer.Deserialize(entry.KeyData, indexedFields);
+            return new ParadoxReader.ParadoxRecord(entry.BlockNumber, 0, values);
         }
 
         /// <summary>

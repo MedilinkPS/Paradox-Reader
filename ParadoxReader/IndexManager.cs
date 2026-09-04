@@ -20,6 +20,12 @@ namespace ParadoxReader
         private readonly ParadoxFile.FieldInfo[]          allFields;
         private readonly int                  primaryKeyFieldCount;
 
+        /// <summary>
+        /// All secondary (.Xnn/.Xgn/.Ynn/.Ygn) index files discovered and
+        /// opened for the parent table, in discovery order.
+        /// </summary>
+        internal IReadOnlyList<SecondaryIndexFile> SecondaryIndexes => secondaryIndexes;
+
         // ----------------------------------------------------------------
         // Constructor
         // ----------------------------------------------------------------

@@ -35,12 +35,20 @@ namespace ParadoxReader
 
             public override bool IsIndexPossible(ParadoxReader.ParadoxRecord indexRec, ParadoxReader.ParadoxRecord nextRec)
             {
-                var val1 = indexRec.DataValues[this.DataFieldIndex];
+                // indexRec/nextRec here represent a synthesized record built directly
+                // from an index leaf entry's key data (see SecondaryIndexFile.Enumerate
+                // and ParadoxPrimaryKey.Enumerate). For secondary indexes, the composed
+                // key layout differs from the parent table's field layout (indexed
+                // field(s) followed by appended primary-key fields), so IndexFieldIndex
+                // - not DataFieldIndex - must be used to look up the value in the key's
+                // own coordinate system. For the primary index, IndexFieldIndex is
+                // conventionally the same as DataFieldIndex.
+                var val1 = indexRec.DataValues[this.IndexFieldIndex];
                 var comp1 = System.Collections.Comparer.Default.Compare(val1, this.Value);
                 int comp2;
                 if (nextRec != null)
                 {
-                    var val2 = nextRec.DataValues[this.DataFieldIndex];
+                    var val2 = nextRec.DataValues[this.IndexFieldIndex];
                     comp2 = System.Collections.Comparer.Default.Compare(val2, this.Value);
                 }
                 else

@@ -201,6 +201,69 @@ namespace ParadoxReader
         }
 
         // ----------------------------------------------------------------
+        // Deserialize
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Deserializes a raw index key byte array (as produced by
+        /// <see cref="Serialize(object[], ParadoxFile.FieldInfo[])"/>) back
+        /// into field values. Used to reconstruct synthetic records from
+        /// .PX/.Xnn/.Xgn leaf-entry key data during index lookups, since the
+        /// on-disk key encoding for each field type is identical to the
+        /// corresponding BinaryReaderWriterPdoxExtensions Read/Write pair
+        /// (sign-flipped, big-endian for numeric types).
+        /// </summary>
+        public static object[] Deserialize(byte[] keyData, ParadoxFile.FieldInfo[] fields)
+        {
+            using (var ms = new MemoryStream(keyData))
+            using (var r  = new BinaryReader(ms))
+            {
+                var values = new object[fields.Length];
+                for (int i = 0; i < fields.Length; i++)
+                    values[i] = ReadField(r, fields[i]);
+                return values;
+            }
+        }
+
+        private static object ReadField(BinaryReader r, ParadoxFile.FieldInfo field)
+        {
+            switch (field.fType)
+            {
+                case ParadoxFieldTypes.Alpha:
+                    return r.ReadPdoxString(field.fSize);
+
+                case ParadoxFieldTypes.Short:
+                    return r.ReadPdoxShort(field.fSize);
+
+                case ParadoxFieldTypes.Long:
+                case ParadoxFieldTypes.AutoInc:
+                    return r.ReadPdoxInt(field.fSize);
+
+                case ParadoxFieldTypes.Currency:
+                case ParadoxFieldTypes.Number:
+                    return r.ReadPdoxDouble(field.fSize);
+
+                case ParadoxFieldTypes.Date:
+                    return r.ReadPdoxDate(field.fSize);
+
+                case ParadoxFieldTypes.Time:
+                    return r.ReadPdoxTime(field.fSize);
+
+                case ParadoxFieldTypes.Timestamp:
+                    return r.ReadPdoxTimestamp(field.fSize);
+
+                case ParadoxFieldTypes.Logical:
+                    return r.ReadPdoxBool(field.fSize);
+
+                case ParadoxFieldTypes.BCD:
+                    return r.ReadPdoxBCD(bCDDecLen: field.fSize, bCDDataLen: 17);
+
+                default:
+                    return r.ReadPdoxBytes(field.fSize);
+            }
+        }
+
+        // ----------------------------------------------------------------
         // Compare
         // ----------------------------------------------------------------
 

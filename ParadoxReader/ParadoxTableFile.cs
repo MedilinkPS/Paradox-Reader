@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using DbBlock = ParadoxReader.DataBlock; // Alias to avoid conflict with ParadoxFile.DataBlock
@@ -35,6 +36,27 @@ namespace ParadoxReader
 
         public ParadoxPrimaryKey PrimaryKeyIndex;
         private ParadoxBlobFile  BlobFile;
+
+        private List<SecondaryIndexHandle> secondaryIndexHandles;
+
+        /// <summary>
+        /// Read-side handles for every discovered secondary (.Xnn/.Xgn/.Ynn/.Ygn)
+        /// index file, allowing condition-based index lookups analogous to
+        /// <see cref="PrimaryKeyIndex"/>.
+        /// </summary>
+        public IReadOnlyList<SecondaryIndexHandle> SecondaryIndexes
+        {
+            get
+            {
+                if (secondaryIndexHandles == null)
+                {
+                    secondaryIndexHandles = new List<SecondaryIndexHandle>();
+                    foreach (var idx in indexManager.SecondaryIndexes)
+                        secondaryIndexHandles.Add(new SecondaryIndexHandle(idx, this));
+                }
+                return secondaryIndexHandles;
+            }
+        }
 
         // ----------------------------------------------------------------
         // Constructor
