@@ -284,7 +284,19 @@ namespace ParadoxReader
 
                         // Leaf entries store the .DB block number 1-based, but
                         // ParadoxFile.GetBlock indexes blocks 0-based, so convert here.
-                        var block = table.GetBlock((ushort)(entry.BlockNumber - 1));
+                        //
+                        // A rebuilt/shrunk .DB can leave a secondary index with a
+                        // leaf entry pointing at a block number that no longer
+                        // exists in the .DB file (observed on real corpus data
+                        // after a BDE rebuild). GetBlock has no bounds checking, so
+                        // that previously surfaced as an uncaught
+                        // EndOfStreamException from deep inside the reader. Skip
+                        // stale entries instead of crashing the whole lookup.
+                        int dbBlockNumber = entry.BlockNumber - 1;
+                        if (dbBlockNumber < 0 || dbBlockNumber >= table.fileBlocks)
+                            continue;
+
+                        var block = table.GetBlock((ushort)dbBlockNumber);
                         for (int r = 0; r < block.RecordCount; r++)
                         {
                             var rec = block[r];
@@ -698,7 +710,20 @@ namespace ParadoxReader
         private PxBlock ReadBlock(ushort blockNumber)
         {
             var block = new PxBlock { BlockNumber = blockNumber, Capacity = blockCapacity };
-            long pos  = indexFile.headerSize + (long)(blockNumber - blockBase) * indexFile.maxTableSize * 0x400;
+            int  blockSize = indexFile.maxTableSize * 0x400;
+            long pos  = indexFile.headerSize + (long)(blockNumber - blockBase) * blockSize;
+
+            // A rebuilt/inconsistent index (or a root-block-base guess that
+            // ResolveBlockBase couldn't validate against any records) can
+            // otherwise send this position past end-of-file, which previously
+            // surfaced deep inside BinaryReader as an opaque
+            // EndOfStreamException. Fail fast with a clearer, still-catchable
+            // exception instead.
+            if (pos < indexFile.headerSize || pos + blockSize > indexFile.stream.Length)
+                throw new InvalidOperationException(
+                    $"[SecondaryIndexFile.ReadBlock] Block {blockNumber} is out of range for '{FilePath}'. " +
+                    $"offset={pos}, blockSize={blockSize}, streamLength={indexFile.stream.Length}, headerSize={indexFile.headerSize}.");
+
             indexFile.stream.Position = pos;
             using (var r = new BinaryReader(indexFile.stream, Encoding.Default, leaveOpen: true))
             {
@@ -709,7 +734,15 @@ namespace ParadoxReader
                 // usedBytes = (entryCount - 1) * entrySize, per WriteBlock below
                 // (0 for both 0 and 1 entries, but any block reached via traversal
                 // is referenced by a parent entry, so it always has >= 1 entry).
+                //
+                // A rebuilt/stale block can leave garbage in usedBytes (observed
+                // on real corpus data after a BDE rebuild), which would otherwise
+                // compute an entryCount that reads far past this block's actual
+                // capacity and crash with an EndOfStreamException. Clamp to what
+                // the block can physically hold.
                 int entryCount = usedBytes == 0 ? 1 : (usedBytes / entrySize) + 1;
+                int maxEntries = Math.Max(blockCapacity / entrySize, 1);
+                if (entryCount < 1 || entryCount > maxEntries) entryCount = Math.Min(Math.Max(entryCount, 1), maxEntries);
                 for (int i = 0; i < entryCount; i++)
                 {
                     byte[] key = r.ReadBytes(keyDataSize);

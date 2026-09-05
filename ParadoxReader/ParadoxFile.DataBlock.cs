@@ -24,18 +24,38 @@ namespace ParadoxReader
                 this.blockNumber = reader.ReadUInt16();
                 this.addDataSize = reader.ReadInt16();
 
-                // This is kind of unnecessary but I wanted to double check we were getting the correct blockNumber
-                if(expectedBlockNumber.HasValue && this.blockNumber != expectedBlockNumber)
+                // Some real-world files (observed after a BDE "rebuild") leave stale
+                // garbage in a block's own header (blockNumber/addDataSize) even
+                // though the block's on-disk position (and expectedBlockNumber,
+                // derived from that position) is authoritative. Previously this threw
+                // an unhandled exception that aborted the whole table; self-heal by
+                // trusting the position-derived value instead, and clamp the record
+                // count so a corrupt addDataSize can't read past the block's actual
+                // capacity (which would otherwise surface later as an
+                // EndOfStreamException).
+                if (expectedBlockNumber.HasValue && this.blockNumber != expectedBlockNumber)
                 {
-                    throw new Exception($"Expected block number {expectedBlockNumber} but got {this.blockNumber}");
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[DataBlock] Block header mismatch in '{file.TableName}': expected block number " +
+                        $"{expectedBlockNumber} but got {this.blockNumber}. Trusting on-disk position.");
+                    this.blockNumber = expectedBlockNumber.Value;
                 }
 
                 var recordCount = (addDataSize / (this.file.RecordSize)) + 1;
+                int maxRecordsInBlock = Math.Max(0, (this.file.maxTableSize * 0x0400 - 6) / this.file.RecordSize);
+                if (recordCount < 0 || recordCount > maxRecordsInBlock)
+                {
+                    System.Diagnostics.Debug.WriteLine(
+                        $"[DataBlock] Implausible record count ({recordCount}) from addDataSize={addDataSize} " +
+                        $"in '{file.TableName}' block {this.blockNumber}; clamping to 0.");
+                    recordCount = 0;
+                }
                 this.RecordCount = recordCount;
                 var recordCountBySize = this.RecordCount * (this.file.RecordSize);
                 this.data = reader.ReadBytes(recordCountBySize);
                 this.recCache = new ParadoxReader.ParadoxRecord[this.data.Length];
             }
+
 
             public ParadoxReader.ParadoxRecord this[int recIndex]
             {

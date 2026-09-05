@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -84,7 +85,16 @@ namespace ParadoxReader
 
                     // Leaf entries store the .DB block number 1-based, but
                     // ParadoxFile.GetBlock indexes blocks 0-based, so convert here.
-                    var block = this.table.GetBlock((ushort)(entry.BlockNumber - 1));
+                    //
+                    // A rebuilt/shrunk .DB can leave a primary index leaf entry
+                    // pointing at a block number that no longer exists in the .DB
+                    // file. Skip stale entries instead of crashing with an
+                    // uncaught EndOfStreamException.
+                    int dbBlockNumber = entry.BlockNumber - 1;
+                    if (dbBlockNumber < 0 || dbBlockNumber >= this.table.fileBlocks)
+                        continue;
+
+                    var block = this.table.GetBlock((ushort)dbBlockNumber);
                     for (int r = 0; r < block.RecordCount; r++)
                     {
                         var rec = block[r];
@@ -146,7 +156,15 @@ namespace ParadoxReader
                 // usedBytes = (entryCount - 1) * entrySize, per PrimaryIndexFile.WriteBlock
                 // (0 for both 0 and 1 entries, but any block reached via traversal is
                 // referenced by a parent entry, so it always has at least 1 entry).
+                //
+                // A rebuilt/stale block can leave garbage in usedBytes (observed on
+                // real corpus data, e.g. !SECURIT.PX after a BDE rebuild), which
+                // would otherwise compute an entryCount that reads far past this
+                // block's actual capacity and crash with an EndOfStreamException.
+                // Clamp to what the block can physically hold.
                 int entryCount = usedBytes == 0 ? 1 : (usedBytes / entrySize) + 1;
+                int maxEntries = blockCapacity / entrySize;
+                if (entryCount < 1 || entryCount > maxEntries) entryCount = Math.Min(Math.Max(entryCount, 1), Math.Max(maxEntries, 1));
 
                 for (int i = 0; i < entryCount; i++)
                 {

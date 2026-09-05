@@ -28,6 +28,12 @@ namespace ParadoxReader
         // ----------------------------------------------------------------
 
         private const int POINTER_SIZE = 6; // blockNumber(2) + recordCount(2) + reserved(2)
+
+        // See SecondaryIndexFile.MAX_TREE_DEPTH: a corrupt/cyclic .PX file can
+        // otherwise send these recursive tree-walk helpers into unbounded
+        // recursion and crash the process with an uncatchable
+        // StackOverflowException. Bail out with a catchable exception instead.
+        private const int MAX_TREE_DEPTH = 64;
         private const int HEADER_SIZE  = 6; // leftChild(2) + reserved(2) + usedBytes(2)
 
         // ----------------------------------------------------------------
@@ -99,7 +105,13 @@ namespace ParadoxReader
 
             byte[] keyData = KeySerializer.Serialize(firstRowKeyValues, primaryKeyFields);
 
-            if (pxFile.stream.Length <= pxFile.headerSize)
+            // Some real-world .PX files (observed after a BDE rebuild, e.g.
+            // Docpwd.PX) are pre-allocated with a non-empty header/stream length
+            // but RecordCount == 0 and stale garbage left over in pxRootBlockId.
+            // Treating stream.Length alone as "has an existing tree" then reads
+            // that bogus root block and crashes. Mirror
+            // SecondaryIndexFile.OnBlockChanged's check of RecordCount as well.
+            if (pxFile.stream.Length <= pxFile.headerSize || pxFile.RecordCount <= 0)
             {
                 var newLeaf = AllocateBlock();
                 newLeaf.Entries.Add(new PxEntry(keyData, pxBlockNumber, (ushort)recordCount));
@@ -193,6 +205,20 @@ namespace ParadoxReader
             public int Index;
         }
 
+        /// <summary>
+        /// A rebuilt/inconsistent .PX file can leave stale garbage in a leaf
+        /// block's LeftChildBlockNumber field (observed on real corpus data,
+        /// e.g. !SECURIT.PX after a BDE rebuild), so PxBlock.IsLeaf
+        /// (LeftChildBlockNumber == 0) alone is not reliable. Branch entries
+        /// always have RecordCount == 0 (see SplitChild) while leaf entries
+        /// always have RecordCount > 0 (guarded in OnBlockChanged), so prefer
+        /// that signal when the node has any entries.
+        /// </summary>
+        private static bool IsLeafNode(PxBlock node)
+        {
+            return node.Entries.Count == 0 || node.Entries[0].RecordCount > 0;
+        }
+
         private FoundEntry FindEntryForBlock(ushort dbBlockNumber)
         {
             if (pxFile.stream.Length <= pxFile.headerSize) return new FoundEntry { Block = null, Index = -1 };
@@ -201,24 +227,33 @@ namespace ParadoxReader
 
         private FoundEntry FindEntryForBlockRecursive(PxBlock node, ushort dbBlockNumber)
         {
-            if (node.IsLeaf)
+            var visited = new HashSet<ushort>();
+            var stack = new Stack<PxBlock>();
+            stack.Push(node);
+
+            while (stack.Count > 0)
             {
-                for (int i = 0; i < node.Entries.Count; i++)
-                    if (node.Entries[i].BlockNumber == dbBlockNumber)
-                        return new FoundEntry { Block = node, Index = i };
-                return new FoundEntry { Block = null, Index = -1 };
+                var cur = stack.Pop();
+                if (!visited.Add(cur.BlockNumber)) continue;
+
+                if (IsLeafNode(cur))
+                {
+                    for (int i = 0; i < cur.Entries.Count; i++)
+                        if (cur.Entries[i].BlockNumber == dbBlockNumber)
+                            return new FoundEntry { Block = cur, Index = i };
+                    continue;
+                }
+
+                if (cur.LeftChildBlockNumber != 0 && !visited.Contains(cur.LeftChildBlockNumber))
+                    stack.Push(ReadBlock(cur.LeftChildBlockNumber));
+
+                foreach (var e in cur.Entries)
+                {
+                    if (visited.Contains(e.BlockNumber)) continue;
+                    stack.Push(ReadBlock(e.BlockNumber));
+                }
             }
 
-            if (node.LeftChildBlockNumber != 0)
-            {
-                var r = FindEntryForBlockRecursive(ReadBlock(node.LeftChildBlockNumber), dbBlockNumber);
-                if (r.Block != null) return r;
-            }
-            foreach (var e in node.Entries)
-            {
-                var r = FindEntryForBlockRecursive(ReadBlock(e.BlockNumber), dbBlockNumber);
-                if (r.Block != null) return r;
-            }
             return new FoundEntry { Block = null, Index = -1 };
         }
 
@@ -259,10 +294,15 @@ namespace ParadoxReader
             }
         }
 
-        private void InsertNonFull(PxBlock node, PxEntry entry)
+        private void InsertNonFull(PxBlock node, PxEntry entry, int depth = 0)
         {
+            if (depth > MAX_TREE_DEPTH)
+                throw new InvalidOperationException(
+                    $"[PrimaryIndexFile.InsertNonFull] Exceeded max tree depth ({MAX_TREE_DEPTH}); " +
+                    "the index file appears to be corrupt or cyclic.");
+
             int i = node.Entries.Count - 1;
-            if (node.IsLeaf)
+            if (IsLeafNode(node))
             {
                 node.Entries.Add(null);
                 while (i >= 0 && CompareKeys(entry.KeyData, node.Entries[i].KeyData) < 0)
@@ -285,7 +325,7 @@ namespace ParadoxReader
                     if (CompareKeys(entry.KeyData, node.Entries[i].KeyData) > 0) i++;
                 }
                 var target = i < node.Entries.Count ? node.Entries[i].BlockNumber : node.LeftChildBlockNumber;
-                InsertNonFull(ReadBlock(target), entry);
+                InsertNonFull(ReadBlock(target), entry, depth + 1);
             }
         }
 
@@ -322,7 +362,7 @@ namespace ParadoxReader
 
             var root = ReadBlock(pxFile.pxRootBlockId);
             DeleteFromNode(root, keyData);
-            if (root.Entries.Count == 0 && !root.IsLeaf)
+            if (root.Entries.Count == 0 && !IsLeafNode(root))
             {
                 UpdateRootBlockId(root.LeftChildBlockNumber);
                 FreeBlock(root.BlockNumber);
@@ -332,13 +372,18 @@ namespace ParadoxReader
             UpdateRecordCount(pxFile.RecordCount - 1);
         }
 
-        private void DeleteFromNode(PxBlock node, byte[] keyData)
+        private void DeleteFromNode(PxBlock node, byte[] keyData, int depth = 0)
         {
+            if (depth > MAX_TREE_DEPTH)
+                throw new InvalidOperationException(
+                    $"[PrimaryIndexFile.DeleteFromNode] Exceeded max tree depth ({MAX_TREE_DEPTH}); " +
+                    "the index file appears to be corrupt or cyclic.");
+
             int i = FindKeyIndex(node, keyData);
             if (i < node.Entries.Count &&
                 CompareKeys(keyData, node.Entries[i].KeyData) == 0)
             {
-                if (node.IsLeaf)
+                if (IsLeafNode(node))
                 {
                     node.Entries.RemoveAt(i);
                     WriteBlock(node);
@@ -348,23 +393,30 @@ namespace ParadoxReader
                     var pred = GetPredecessor(node, i);
                     node.Entries[i] = pred;
                     WriteBlock(node);
-                    DeleteFromNode(ReadBlock(node.Entries[i].BlockNumber), pred.KeyData);
+                    DeleteFromNode(ReadBlock(node.Entries[i].BlockNumber), pred.KeyData, depth + 1);
                 }
             }
-            else if (!node.IsLeaf)
+            else if (!IsLeafNode(node))
             {
                 var child = ReadBlock(i < node.Entries.Count
                     ? node.Entries[i].BlockNumber
                     : node.LeftChildBlockNumber);
-                DeleteFromNode(child, keyData);
+                DeleteFromNode(child, keyData, depth + 1);
             }
         }
 
         private PxEntry GetPredecessor(PxBlock node, int idx)
         {
             var cur = ReadBlock(node.Entries[idx].BlockNumber);
-            while (!cur.IsLeaf)
+            int depth = 0;
+            while (!IsLeafNode(cur))
+            {
+                if (++depth > MAX_TREE_DEPTH)
+                    throw new InvalidOperationException(
+                        $"[PrimaryIndexFile.GetPredecessor] Exceeded max tree depth ({MAX_TREE_DEPTH}); " +
+                        "the index file appears to be corrupt or cyclic.");
                 cur = ReadBlock(cur.Entries[cur.Entries.Count - 1].BlockNumber);
+            }
             return cur.Entries[cur.Entries.Count - 1];
         }
 
