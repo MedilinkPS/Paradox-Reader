@@ -61,7 +61,7 @@ namespace ParadoxReader
         /// Recursively traverses a .PX B-tree node. <paramref name="level"/> is
         /// the node's depth, per the file header's pxLevelCount (root starts
         /// at pxLevelCount). Empirically (against a real 3-level
-        /// SMSINSINGLE.DB index), Entries alone fully and exclusively
+        /// TESTTAB_LARGEDATA.DB index), Entries alone fully and exclusively
         /// enumerate a node's children at every level - LeftChildBlockNumber
         /// is redundant/non-child data (e.g. duplicates Entries[0].BlockNumber
         /// on the root) and must never be followed, or rows get double

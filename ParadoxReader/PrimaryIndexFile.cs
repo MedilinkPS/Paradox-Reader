@@ -93,7 +93,7 @@ namespace ParadoxReader
                 $"[PrimaryIndexFile.OnBlockChanged] dbBlockNumber={dbBlockNumber}, recordCount={recordCount}");
 
             // Leaf entries store the .DB block number 1-based (confirmed against
-            // a real 3-level SMSINSINGLE.DB/.PX pair), but dbBlockNumber (from
+            // a real 3-level TESTTAB_LARGEDATA.DB/.PX pair), but dbBlockNumber (from
             // ParadoxTableFile) is 0-based, so convert at this API boundary.
             ushort pxBlockNumber = (ushort)(dbBlockNumber + 1);
 

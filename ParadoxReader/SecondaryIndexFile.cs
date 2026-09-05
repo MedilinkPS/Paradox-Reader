@@ -140,7 +140,7 @@ namespace ParadoxReader
                 $"[SecondaryIndexFile.OnBlockChanged] blockNumber={blockNumber}, recordCount={recordCount}");
 
             // Leaf entries store the .DB block number 1-based (matching the
-            // real on-disk format confirmed against SMSINSINGLE.DB/.PX), but
+            // real on-disk format confirmed against TESTTAB_LARGEDATA.DB/.PX), but
             // blockNumber (from ParadoxTableFile) is 0-based, so convert here.
             ushort dbBlockNumber = (ushort)(blockNumber + 1);
 
@@ -203,7 +203,7 @@ namespace ParadoxReader
         ///
         /// IMPORTANT: unlike the primary key (.PX) index, this index file's
         /// own pxLevelCount header field was empirically found to be
-        /// unreliable (observed as 0 on a real multi-level SMSINSINGLE.XG0
+        /// unreliable (observed as 0 on a real multi-level TESTTAB_LARGEDATA.XG0
         /// index), so leaf detection cannot rely on level counting the way
         /// <see cref="ParadoxPrimaryKey.EnumerateNode"/> does. Instead, since
         /// the bottom level's entries reference .DB blocks (which can be
@@ -217,7 +217,7 @@ namespace ParadoxReader
         /// when a node overflows one block, LeftChildBlockNumber chains to
         /// a *sibling* block holding the node's remaining entries, in
         /// strictly ascending key order (confirmed empirically on
-        /// SMSINSINGLE.XG0: root block 0's own entries end at key
+        /// TESTTAB_LARGEDATA.XG0: root block 0's own entries end at key
         /// "009D8080...", and its LeftChildBlockNumber=2 chains to a block
         /// whose entries continue upward from "00A08080..."; this repeats
         /// at every level, not just leaves). So LeftChildBlockNumber must
@@ -256,7 +256,7 @@ namespace ParadoxReader
                 // OnBlockChanged) - but that signal only exists when this
                 // index's pointer format actually stores a recordCount field
                 // (pointerSize >= 6). For narrower pointer formats (e.g.
-                // pointerSize == 2, observed on a real SMSINSINGLE.XG0),
+                // pointerSize == 2, observed on a real TESTTAB_LARGEDATA.XG0),
                 // RecordCount is always 0 regardless of level, so fall back
                 // to the block-number-range heuristic in that case.
                 bool isLeaf = IsLeafNode(cur);
