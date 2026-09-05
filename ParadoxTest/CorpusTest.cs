@@ -8,26 +8,26 @@ using ParadoxReader;
 namespace ParadoxTest
 {
     /// <summary>
-    /// Extensive, separate corpus-wide regression test mode. Unlike the other
-    /// test modes in this project (which target a single, well-known table
-    /// with a hardcoded schema), this mode walks every table found under a
-    /// real-world data directory (see CorpusDataRootPath appSetting), infers each
-    /// table's schema dynamically from its own header (field names/types,
-    /// primary key, discovered secondary indexes), and exercises append /
-    /// update / read / primary-lookup / secondary-lookup operations against a
-    /// disposable working copy via ParadoxReader, then repeats an equivalent
-    /// sequence via SQLRunner against a second disposable working copy of the
-    /// same table, comparing structural results (record counts, presence of
+    /// General-purpose, schema-agnostic regression test mode. Walks every
+    /// table found under a data directory, infers each table's schema
+    /// dynamically from its own header (field names/types, primary key,
+    /// discovered secondary indexes), and exercises append / update / read /
+    /// primary-lookup / secondary-lookup operations against a disposable
+    /// working copy via ParadoxReader, then repeats an equivalent sequence
+    /// via SQLRunner against a second disposable working copy of the same
+    /// table, comparing structural results (record counts, presence of
     /// looked-up rows) between the two.
     ///
-    /// The corpus data directory is machine-specific and is never hard-coded;
-    /// it must be supplied via the "corpusRoot" argument or the
-    /// "CorpusDataRootPath" appSetting (see SqlRunner.local.config.example).
+    /// The data directory to scan is resolved, in order: the "corpusRoot"
+    /// argument; the "CorpusDataRootPath" appSetting (see
+    /// SqlRunner.local.config.example); the bundled bin\Debug\data fixture
+    /// folder (always present, so this mode works out of the box even with
+    /// no machine-specific configuration).
     ///
-    /// Some tables in a real corpus are password-protected; ParadoxReader does
-    /// not currently implement Paradox's encryption, so those tables are
-    /// expected to fail. Failures are caught and reported per-table without
-    /// aborting the rest of the corpus run.
+    /// Some tables (e.g. real-world corpus data) may be password-protected;
+    /// ParadoxReader does not currently implement Paradox's encryption, so
+    /// those tables are expected to fail. Failures are caught and reported
+    /// per-table without aborting the rest of the run.
     /// </summary>
     internal static class CorpusTest
     {
@@ -58,7 +58,18 @@ namespace ParadoxTest
         /// <param name="filter">Optional substring filter on table base name (case-insensitive).</param>
         public static void Run(string corpusRoot, int maxTables, string filter)
         {
-            corpusRoot = string.IsNullOrWhiteSpace(corpusRoot) ? Configuration.GetCorpusDataRootPath() : corpusRoot;
+            if (string.IsNullOrWhiteSpace(corpusRoot))
+                corpusRoot = Configuration.GetCorpusDataRootPath();
+
+            // Final fallback: the bundled fixture data folder copied to the
+            // output directory (bin\Debug\data) alongside the exe, so this
+            // mode always has *something* to run against out of the box,
+            // without requiring any machine-specific configuration.
+            if (string.IsNullOrWhiteSpace(corpusRoot))
+            {
+                corpusRoot = Path.Combine(
+                    Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location), "data");
+            }
 
             if (string.IsNullOrWhiteSpace(corpusRoot) || !Directory.Exists(corpusRoot))
             {
