@@ -29,6 +29,16 @@ namespace ParadoxReader
         private const int POINTER_SIZE = 6; // blockNumber(2) + recordCount(2) + reserved(2)
         private const int HEADER_SIZE  = 6; // leftChild(2) + reserved(2) + usedBytes(2)
 
+        // Real-world Paradox B-tree indexes are shallow (a handful of levels even
+        // for tables with tens of thousands of records). A corrupt or cyclic index
+        // file (observed on real corpus data, e.g. !itemfee/!REFERAL) can otherwise
+        // send recursive tree-walk helpers (InsertNonFull, DeleteFromNode,
+        // GetPredecessor, EnumerateNode) into unbounded/cyclic recursion, which -
+        // unlike a normal exception - crashes the whole process with an
+        // uncatchable StackOverflowException. Bail out with a catchable exception
+        // once this depth is exceeded instead.
+        private const int MAX_TREE_DEPTH = 64;
+
         // ----------------------------------------------------------------
         // Fields
         // ----------------------------------------------------------------
@@ -80,8 +90,20 @@ namespace ParadoxReader
             entrySize     = indexFile.RecordSize > keyDataSize ? indexFile.RecordSize : keyDataSize + POINTER_SIZE;
             pointerSize   = entrySize - keyDataSize;
             blockCapacity = indexFile.maxTableSize * 0x400 - HEADER_SIZE;
-            blockBase     = (indexFile.FileType == ParadoxFileType.XgnFileNonInc ||
-                             indexFile.FileType == ParadoxFileType.XgnFileInc) ? (ushort)0 : (ushort)1;
+
+            // XgnFile types are documented/typically 0-based block numbers while
+            // YgnFile/XnnFile are 1-based, but this has been observed to NOT hold
+            // for every real-world file (e.g. a corpus !account.X12 - nominally
+            // XnnFileInc/1-based - whose on-disk pxRootBlockId only resolves to a
+            // valid in-file position under the 0-based interpretation). Rather than
+            // trust the file-type-derived default blindly (which can compute a
+            // negative/out-of-range stream position and throw
+            // ArgumentOutOfRangeException from FileStream.set_Position), verify it
+            // against the file's own root block pointer and fall back to whichever
+            // interpretation is actually consistent with the on-disk data.
+            ushort typeDefaultBase = (indexFile.FileType == ParadoxFileType.XgnFileNonInc ||
+                                      indexFile.FileType == ParadoxFileType.XgnFileInc) ? (ushort)0 : (ushort)1;
+            blockBase = ResolveBlockBase(typeDefaultBase, indexFile);
 
             System.Diagnostics.Debug.WriteLine(
                 $"[SecondaryIndexFile] Opened '{indexFilePath}': " +
@@ -213,11 +235,22 @@ namespace ParadoxReader
         /// (infinite) upper range and always descend into it.
         /// </summary>
         private IEnumerable<ParadoxReader.ParadoxRecord> EnumerateNode(
-            PxBlock node, ParadoxCondition condition, ParadoxFile table, ParadoxReader.ParadoxRecord upperBoundRec)
+            PxBlock node, ParadoxCondition condition, ParadoxFile table, ParadoxReader.ParadoxRecord upperBoundRec, int depth = 0)
         {
+            if (depth > MAX_TREE_DEPTH)
+                throw new InvalidOperationException(
+                    $"[SecondaryIndexFile.EnumerateNode] Exceeded max tree depth ({MAX_TREE_DEPTH}) for '{FilePath}'; " +
+                    "the index file appears to be corrupt or cyclic.");
+
             PxBlock cur = node;
+            var visited = new HashSet<ushort>();
             while (cur != null)
             {
+                if (!visited.Add(cur.BlockNumber))
+                    throw new InvalidOperationException(
+                        $"[SecondaryIndexFile.EnumerateNode] Detected a cyclic leaf/sibling chain in '{FilePath}' " +
+                        $"(block {cur.BlockNumber} revisited); the index file appears to be corrupt.");
+
                 // Branch entries always have RecordCount == 0 (see SplitChild),
                 // while leaf entries always have RecordCount > 0 (guarded in
                 // OnBlockChanged) - but that signal only exists when this
@@ -226,9 +259,7 @@ namespace ParadoxReader
                 // pointerSize == 2, observed on a real SMSINSINGLE.XG0),
                 // RecordCount is always 0 regardless of level, so fall back
                 // to the block-number-range heuristic in that case.
-                bool isLeaf = cur.Entries.Count == 0 || (pointerSize >= 6
-                    ? cur.Entries[0].RecordCount > 0
-                    : !IsValidIndexBlockNumber(cur.Entries[0].BlockNumber));
+                bool isLeaf = IsLeafNode(cur);
 
                 PxBlock chainNext = (cur.LeftChildBlockNumber != 0 && IsValidIndexBlockNumber(cur.LeftChildBlockNumber))
                     ? ReadBlock(cur.LeftChildBlockNumber) : null;
@@ -279,7 +310,7 @@ namespace ParadoxReader
                         bool possible = condition.IsIndexPossible(indexRec, nextRec);
                         if (!possible) continue;
 
-                        foreach (var rec in EnumerateNode(ReadBlock(entry.BlockNumber), condition, table, nextRec))
+                        foreach (var rec in EnumerateNode(ReadBlock(entry.BlockNumber), condition, table, nextRec, depth + 1))
                             yield return rec;
                     }
                 }
@@ -300,6 +331,35 @@ namespace ParadoxReader
             int blockSize = indexFile.maxTableSize * 0x400;
             long pos = indexFile.headerSize + (long)(blockNumber - blockBase) * blockSize;
             return blockNumber >= blockBase && pos >= indexFile.headerSize && pos + blockSize <= indexFile.stream.Length;
+        }
+
+        /// <summary>
+        /// Determines whether root block numbers in this index file are 0-based
+        /// or 1-based by checking which interpretation makes the file's own
+        /// pxRootBlockId resolve to a physically valid in-file block position.
+        /// Falls back to <paramref name="typeDefaultBase"/> (the documented
+        /// convention for this file's <see cref="ParadoxFileType"/>) if neither
+        /// interpretation validates cleanly, or if the file has no records yet
+        /// (root block is meaningless for an empty/new index).
+        /// </summary>
+        private static ushort ResolveBlockBase(ushort typeDefaultBase, ParadoxFile indexFile)
+        {
+            if (indexFile.RecordCount <= 0 || indexFile.stream.Length <= indexFile.headerSize)
+                return typeDefaultBase;
+
+            int blockSize = indexFile.maxTableSize * 0x400;
+            bool IsValidUnder(ushort candidateBase)
+            {
+                long pos = indexFile.headerSize + (long)(indexFile.pxRootBlockId - candidateBase) * blockSize;
+                return indexFile.pxRootBlockId >= candidateBase && pos >= indexFile.headerSize && pos + blockSize <= indexFile.stream.Length;
+            }
+
+            if (IsValidUnder(typeDefaultBase)) return typeDefaultBase;
+
+            ushort alternateBase = typeDefaultBase == 0 ? (ushort)1 : (ushort)0;
+            if (IsValidUnder(alternateBase)) return alternateBase;
+
+            return typeDefaultBase;
         }
 
         /// <summary>
@@ -400,26 +460,71 @@ namespace ParadoxReader
             return FindEntryForBlockRecursive(ReadBlock(indexFile.pxRootBlockId), blockNumber);
         }
 
+        /// <summary>
+        /// Same leaf-vs-branch classification used by <see cref="EnumerateNode"/>.
+        /// A naive check of <see cref="PxBlock.IsLeaf"/> (LeftChildBlockNumber == 0)
+        /// is NOT sufficient here: a single logical leaf level can span multiple
+        /// physical blocks chained via LeftChildBlockNumber pointing to a *sibling*
+        /// continuation block (not a child), so that field alone cannot distinguish
+        /// "branch node with a first child" from "leaf node chained to its sibling".
+        /// Using the wrong classification causes write-path code (FindEntryForBlock,
+        /// BTreeInsert/BTreeDelete) to misinterpret a .DB block number (which can be
+        /// arbitrarily large) as an in-file index block number, producing an invalid
+        /// (negative) stream position and an ArgumentOutOfRangeException
+        /// ("Non-negative number required.") from FileStream.set_Position.
+        /// </summary>
+        private bool IsLeafNode(PxBlock node)
+        {
+            return node.Entries.Count == 0 || (pointerSize >= 6
+                ? node.Entries[0].RecordCount > 0
+                : !IsValidIndexBlockNumber(node.Entries[0].BlockNumber));
+        }
+
         private FoundEntry FindEntryForBlockRecursive(PxBlock node, ushort blockNumber)
         {
-            if (node.IsLeaf)
+            // Iterative traversal with a visited-block guard: on corrupt/unusual
+            // index files (observed on real corpus data, e.g. !itemfee), the
+            // LeftChildBlockNumber/entry chain can loop back on itself. A plain
+            // recursive walk over such a cycle recurses without bound and
+            // crashes the whole process with a StackOverflowException (which
+            // cannot be caught), so track visited block numbers and iterate
+            // instead of recursing to guarantee termination.
+            var visited = new HashSet<ushort>();
+            var stack = new Stack<PxBlock>();
+            stack.Push(node);
+
+            while (stack.Count > 0)
             {
-                for (int i = 0; i < node.Entries.Count; i++)
-                    if (node.Entries[i].BlockNumber == blockNumber)
-                        return new FoundEntry { Block = node, Index = i };
-                return new FoundEntry { Block = null, Index = -1 };
+                var cur = stack.Pop();
+                if (!visited.Add(cur.BlockNumber)) continue;
+
+                if (IsLeafNode(cur))
+                {
+                    for (int i = 0; i < cur.Entries.Count; i++)
+                        if (cur.Entries[i].BlockNumber == blockNumber)
+                            return new FoundEntry { Block = cur, Index = i };
+
+                    // Leaf level continuation: LeftChildBlockNumber here is a sibling
+                    // chain pointer, not a child - follow it to keep searching this
+                    // same logical leaf level (mirrors EnumerateNode's chainNext).
+                    if (cur.LeftChildBlockNumber != 0 && IsValidIndexBlockNumber(cur.LeftChildBlockNumber) &&
+                        !visited.Contains(cur.LeftChildBlockNumber))
+                        stack.Push(ReadBlock(cur.LeftChildBlockNumber));
+
+                    continue;
+                }
+
+                if (cur.LeftChildBlockNumber != 0 && IsValidIndexBlockNumber(cur.LeftChildBlockNumber) &&
+                    !visited.Contains(cur.LeftChildBlockNumber))
+                    stack.Push(ReadBlock(cur.LeftChildBlockNumber));
+
+                foreach (var e in cur.Entries)
+                {
+                    if (!IsValidIndexBlockNumber(e.BlockNumber) || visited.Contains(e.BlockNumber)) continue;
+                    stack.Push(ReadBlock(e.BlockNumber));
+                }
             }
 
-            if (node.LeftChildBlockNumber != 0)
-            {
-                var r = FindEntryForBlockRecursive(ReadBlock(node.LeftChildBlockNumber), blockNumber);
-                if (r.Block != null) return r;
-            }
-            foreach (var e in node.Entries)
-            {
-                var r = FindEntryForBlockRecursive(ReadBlock(e.BlockNumber), blockNumber);
-                if (r.Block != null) return r;
-            }
             return new FoundEntry { Block = null, Index = -1 };
         }
 
@@ -460,10 +565,15 @@ namespace ParadoxReader
             }
         }
 
-        private void InsertNonFull(PxBlock node, PxEntry entry)
+        private void InsertNonFull(PxBlock node, PxEntry entry, int depth = 0)
         {
+            if (depth > MAX_TREE_DEPTH)
+                throw new InvalidOperationException(
+                    $"[SecondaryIndexFile.InsertNonFull] Exceeded max tree depth ({MAX_TREE_DEPTH}) for '{FilePath}'; " +
+                    "the index file appears to be corrupt or cyclic.");
+
             int i = node.Entries.Count - 1;
-            if (node.IsLeaf)
+            if (IsLeafNode(node))
             {
                 node.Entries.Add(null);
                 while (i >= 0 && CompareKeys(entry.KeyData, node.Entries[i].KeyData) < 0)
@@ -486,7 +596,7 @@ namespace ParadoxReader
                     if (CompareKeys(entry.KeyData, node.Entries[i].KeyData) > 0) i++;
                 }
                 var target = i < node.Entries.Count ? node.Entries[i].BlockNumber : node.LeftChildBlockNumber;
-                InsertNonFull(ReadBlock(target), entry);
+                InsertNonFull(ReadBlock(target), entry, depth + 1);
             }
         }
 
@@ -523,7 +633,7 @@ namespace ParadoxReader
 
             var root = ReadBlock(indexFile.pxRootBlockId);
             DeleteFromNode(root, keyData);
-            if (root.Entries.Count == 0 && !root.IsLeaf)
+            if (root.Entries.Count == 0 && !IsLeafNode(root))
             {
                 UpdateRootBlockId(root.LeftChildBlockNumber);
                 FreeBlock(root.BlockNumber);
@@ -533,13 +643,18 @@ namespace ParadoxReader
             UpdateRecordCount(indexFile.RecordCount - 1);
         }
 
-        private void DeleteFromNode(PxBlock node, byte[] keyData)
+        private void DeleteFromNode(PxBlock node, byte[] keyData, int depth = 0)
         {
+            if (depth > MAX_TREE_DEPTH)
+                throw new InvalidOperationException(
+                    $"[SecondaryIndexFile.DeleteFromNode] Exceeded max tree depth ({MAX_TREE_DEPTH}) for '{FilePath}'; " +
+                    "the index file appears to be corrupt or cyclic.");
+
             int i = FindKeyIndex(node, keyData);
             if (i < node.Entries.Count &&
                 CompareKeys(keyData, node.Entries[i].KeyData) == 0)
             {
-                if (node.IsLeaf)
+                if (IsLeafNode(node))
                 {
                     node.Entries.RemoveAt(i);
                     WriteBlock(node);
@@ -549,23 +664,30 @@ namespace ParadoxReader
                     var pred = GetPredecessor(node, i);
                     node.Entries[i] = pred;
                     WriteBlock(node);
-                    DeleteFromNode(ReadBlock(node.Entries[i].BlockNumber), pred.KeyData);
+                    DeleteFromNode(ReadBlock(node.Entries[i].BlockNumber), pred.KeyData, depth + 1);
                 }
             }
-            else if (!node.IsLeaf)
+            else if (!IsLeafNode(node))
             {
                 var child = ReadBlock(i < node.Entries.Count
                     ? node.Entries[i].BlockNumber
                     : node.LeftChildBlockNumber);
-                DeleteFromNode(child, keyData);
+                DeleteFromNode(child, keyData, depth + 1);
             }
         }
 
         private PxEntry GetPredecessor(PxBlock node, int idx)
         {
             var cur = ReadBlock(node.Entries[idx].BlockNumber);
-            while (!cur.IsLeaf)
+            int depth = 0;
+            while (!IsLeafNode(cur))
+            {
+                if (++depth > MAX_TREE_DEPTH)
+                    throw new InvalidOperationException(
+                        $"[SecondaryIndexFile.GetPredecessor] Exceeded max tree depth ({MAX_TREE_DEPTH}) for '{FilePath}'; " +
+                        "the index file appears to be corrupt or cyclic.");
                 cur = ReadBlock(cur.Entries[cur.Entries.Count - 1].BlockNumber);
+            }
             return cur.Entries[cur.Entries.Count - 1];
         }
 
