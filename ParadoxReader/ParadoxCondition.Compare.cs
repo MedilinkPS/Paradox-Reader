@@ -13,7 +13,7 @@ namespace ParadoxReader
             public override bool IsDataOk(ParadoxReader.ParadoxRecord dataRec)
             {
                 var val = dataRec.DataValues[this.DataFieldIndex];
-                var comp = System.Collections.Comparer.Default.Compare(val, this.Value);
+                var comp = CompareValues(val, this.Value);
                 switch (Operator)
                 {
                     case ParadoxCompareOperator.Equal:
@@ -44,12 +44,12 @@ namespace ParadoxReader
                 // own coordinate system. For the primary index, IndexFieldIndex is
                 // conventionally the same as DataFieldIndex.
                 var val1 = indexRec.DataValues[this.IndexFieldIndex];
-                var comp1 = System.Collections.Comparer.Default.Compare(val1, this.Value);
+                var comp1 = CompareValues(val1, this.Value);
                 int comp2;
                 if (nextRec != null)
                 {
                     var val2 = nextRec.DataValues[this.IndexFieldIndex];
-                    comp2 = System.Collections.Comparer.Default.Compare(val2, this.Value);
+                    comp2 = CompareValues(val2, this.Value);
                 }
                 else
                 {
@@ -72,6 +72,22 @@ namespace ParadoxReader
                     default:
                         throw new System.NotSupportedException();
                 }
+            }
+
+            /// <summary>
+            /// Compares two values the same way Paradox physically orders keys
+            /// on disk. Strings must be compared ordinally (raw byte value),
+            /// not with <see cref="System.Collections.Comparer.Default"/>'s
+            /// culture-aware string comparison - the latter can disagree with
+            /// the on-disk B-tree order for bytes like 0x80-0xFF (mapped to
+            /// punctuation/symbols in the default codepage), causing index
+            /// traversal to prune the wrong subtree and miss matching rows.
+            /// </summary>
+            private static int CompareValues(object a, object b)
+            {
+                if (a is string sa && b is string sb)
+                    return string.CompareOrdinal(sa, sb);
+                return System.Collections.Comparer.Default.Compare(a, b);
             }
 
             public Compare(ParadoxCompareOperator op, object value, int dataFieldIndex, int indexFieldIndex)

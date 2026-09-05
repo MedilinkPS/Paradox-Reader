@@ -483,6 +483,7 @@ namespace ParadoxReader
 
         private void UpdateRootBlockId(ushort newRootId)
         {
+            pxFile.pxRootBlockId = newRootId;
             pxFile.stream.Position = 0x1E;
             using (var w = new BinaryWriter(pxFile.stream, Encoding.Default, leaveOpen: true))
                 w.Write(newRootId);
