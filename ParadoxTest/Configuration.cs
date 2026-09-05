@@ -52,5 +52,23 @@ namespace ParadoxTest
             }
             return dbPath;
         }
+
+        // Machine-specific; deliberately NOT hard-coded so it never needs to
+        // be committed. Configured via appSettings key "SqlRunnerExePath",
+        // whose value normally comes from ParadoxTest\SqlRunner.local.config
+        // (git-ignored - see SqlRunner.local.config.example for the template).
+        // Falls back to string.Empty when unset/missing, which callers treat
+        // the same as "SQLRunner not found" and skip gracefully.
+        internal static string GetSqlRunnerExePath()
+        {
+            try
+            {
+                return System.Configuration.ConfigurationManager.AppSettings["SqlRunnerExePath"] ?? string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
     }
 }
