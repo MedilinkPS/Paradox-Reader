@@ -79,15 +79,28 @@ namespace ParadoxReader
                 if (startField >= 0 && startField < allFields.Length)
                 {
                     // Primary path: use the explicit field number from the header
-                    // to locate the FIRST indexed field. The secondary index key
-                    // is composed of the indexed field(s) followed by the parent
-                    // table's primary key field(s), which are appended for
-                    // uniqueness. f.FieldCount reflects this total, so the
-                    // indexed portion is FieldCount - primaryKeyFieldCount
-                    // (falling back to the full count when that would be
-                    // non-positive).
-                    int indexedFieldCount = f.FieldCount - primaryKeyFieldCount;
-                    if (indexedFieldCount <= 0) indexedFieldCount = f.FieldCount;
+                    // to locate the FIRST indexed field. The secondary index's
+                    // own field list is composed of: the indexed field(s),
+                    // followed by the parent table's primary key field(s)
+                    // (appended for uniqueness), followed by one trailing
+                    // non-key field (observed to always be a 2-byte Short)
+                    // that Paradox appends to every .XGn index and is neither
+                    // an indexed field nor a PK field. That trailing field is
+                    // never present on .YGn companions (which also report
+                    // indexFieldNumber=0/primaryKeyFields=0 and take the
+                    // fallback path below instead).
+                    //
+                    // So: totalKeyFields = FieldCount - 1 (drop the trailing
+                    // field) covers indexed + PK fields, some of which may
+                    // overlap (an indexed field can itself be one of the PK
+                    // fields, e.g. a secondary sort order over a compound
+                    // key). indexedFieldCount is therefore the portion of
+                    // totalKeyFields beyond the PK fields, with a floor of 1
+                    // since the header's indexFieldNumber always identifies
+                    // at least one indexed field even when it fully overlaps
+                    // the primary key.
+                    int totalKeyFields    = f.FieldCount - 1;
+                    int indexedFieldCount = Math.Max(1, totalKeyFields - primaryKeyFieldCount);
 
                     // Composite indexes (indexedFieldCount > 1) are not
                     // guaranteed to cover contiguous parent-table field
