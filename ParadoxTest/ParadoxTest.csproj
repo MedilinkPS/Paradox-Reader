@@ -46,6 +46,7 @@
     <Compile Include="CorpusTest.cs" />
     <Compile Include="LibUpdateTest.cs" />
     <Compile Include="MiscTests.cs" />
+    <Compile Include="DbHeaderSnapshot.cs" />
     <Compile Include="Configuration.cs" />
     <Compile Include="Program.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
