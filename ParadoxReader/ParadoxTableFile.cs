@@ -70,7 +70,8 @@ namespace ParadoxReader
                 stream,
                 headerSize,
                 RecordSize,
-                maxTableSize);
+                maxTableSize,
+                EncryptionKey);
 
             indexManager = new IndexManager(
                 filePath,

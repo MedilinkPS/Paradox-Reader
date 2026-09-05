@@ -18,6 +18,7 @@ namespace ParadoxReader
         private readonly int    recordSize;
         private readonly int    blockDataSize; // usable bytes per block (excl. block header)
         private readonly int    fullBlockSize; // blockDataSize + DataBlock.HEADER_SIZE
+        private readonly uint   encryptionKey; // 0 if the table is not password-protected
 
         // ----------------------------------------------------------------
         // Constructor
@@ -29,11 +30,16 @@ namespace ParadoxReader
         /// <param name="maxTableSize">
         /// From the .DB file header. Block size = max(maxTableSize,1) * 1024.
         /// </param>
-        public BlockManager(Stream stream, int headerSize, int recordSize, int maxTableSize)
+        /// <param name="encryptionKey">
+        /// The table's 32-bit encryption key (see ParadoxFile.EncryptionKey),
+        /// or 0 if the table is not password-protected.
+        /// </param>
+        public BlockManager(Stream stream, int headerSize, int recordSize, int maxTableSize, uint encryptionKey = 0)
         {
             this.stream     = stream;
             this.headerSize = headerSize;
             this.recordSize = recordSize;
+            this.encryptionKey = encryptionKey;
 
             int tableSize      = Math.Max(maxTableSize, 1);
             this.fullBlockSize  = tableSize * 1024;
@@ -62,6 +68,11 @@ namespace ParadoxReader
             if (bytesRead < DataBlock.HEADER_SIZE)
                 throw new IOException($"Failed to read block {blockNumber}: " +
                                       $"only {bytesRead} bytes read.");
+            if (encryptionKey != 0)
+            {
+                // On-disk block numbers used for the crypt salt are 1-based.
+                PxCrypt.DecryptDbBlock(block.RawData, 0, block.RawData.Length, encryptionKey, (uint)(blockNumber + 1));
+            }
             block.ParseHeader();
             return block;
         }
@@ -73,7 +84,16 @@ namespace ParadoxReader
         {
             block.FlushHeader();
             stream.Position = BlockPosition(block.BlockNumber);
-            stream.Write(block.RawData, 0, block.RawData.Length);
+            if (encryptionKey != 0)
+            {
+                var encrypted = (byte[])block.RawData.Clone();
+                PxCrypt.EncryptDbBlock(encrypted, 0, encrypted.Length, encryptionKey, (uint)(block.BlockNumber + 1));
+                stream.Write(encrypted, 0, encrypted.Length);
+            }
+            else
+            {
+                stream.Write(block.RawData, 0, block.RawData.Length);
+            }
             stream.Flush();
         }
 

@@ -74,6 +74,7 @@
     <Compile Include="PrimaryIndexFile.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="PxBlock.cs" />
+    <Compile Include="PxCrypt.cs" />
     <Compile Include="PxEntry.cs" />
     <Compile Include="SecondaryIndexFile.cs" />
     <Compile Include="SecondaryIndexDiscovery.cs" />

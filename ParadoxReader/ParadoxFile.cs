@@ -63,6 +63,35 @@ namespace ParadoxReader
         internal readonly Stream stream;
         private readonly BinaryReader reader;
 
+        /// <summary>
+        /// The 32-bit encryption key used to obfuscate this table's data blocks,
+        /// or 0 if the table is not password-protected. Paradox stores this key
+        /// (derived from the password via <see cref="PxCrypt.PasswordChecksum"/>)
+        /// directly in the header, so decrypting a table's data does not
+        /// require knowing the original password - this is why "master
+        /// passwords" appear to work for any table: the key itself, not the
+        /// password, gates the actual data.
+        ///
+        /// encryption1 (at header offset 0x25) holds the key for regular
+        /// .DB files. For index files (.PX/.Xnn/etc.) that field instead
+        /// holds the sentinel 0xFF00FF00, meaning the real key is stored in
+        /// encryption2 within the V4 header block that follows the field
+        /// definitions (only present when fileVersionID >= 5).
+        /// </summary>
+        public uint EncryptionKey
+        {
+            get
+            {
+                if (unchecked((uint)encryption1) == 0xFF00FF00 && V4Header != null)
+                {
+                    return unchecked((uint)V4Header.Encryption2);
+                }
+                return unchecked((uint)encryption1);
+            }
+        }
+
+        public bool IsEncrypted => EncryptionKey != 0;
+
         public ParadoxFile(string filePath) : this(new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
         {
         }
@@ -204,17 +233,73 @@ namespace ParadoxReader
 
         internal DataBlock GetBlock(ushort blockNumber)
         {
-            this.stream.Position = blockNumber * this.maxTableSize * 0x0400 + this.headerSize;
+            int blockSize = this.maxTableSize * 0x0400;
+            long blockPosition = blockNumber * (long)blockSize + this.headerSize;
+            this.stream.Position = blockPosition;
+
+            if (this.IsEncrypted)
+            {
+                var rawBlock = new byte[blockSize];
+                int totalRead = 0;
+                while (totalRead < blockSize)
+                {
+                    int n = this.stream.Read(rawBlock, totalRead, blockSize - totalRead);
+                    if (n <= 0) break;
+                    totalRead += n;
+                }
+                // blockNumber on disk is 1-based for the crypt chunk salt.
+                PxCrypt.DecryptDbBlock(rawBlock, 0, blockSize, this.EncryptionKey, (uint)(blockNumber + 1));
+                using (var ms = new MemoryStream(rawBlock))
+                using (var blockReader = new BinaryReader(ms))
+                {
+                    return new DataBlock(this, blockReader, blockNumber);
+                }
+            }
+
             return new DataBlock(this, this.reader, blockNumber);
         }
 
         private void WriteRecords(byte[] data, ushort blockNumber, int[] blockRecIndices)
         {
-            this.stream.Position = blockNumber * this.maxTableSize * 0x0400 + this.headerSize
-                + sizeof(UInt16) // nextBlock
-                + sizeof(UInt16) // blockNumber
-                + sizeof(Int16) // addDataSize
-                ;
+            int blockSize = this.maxTableSize * 0x0400;
+            long blockPosition = blockNumber * (long)blockSize + this.headerSize;
+            const int blockHeaderSize = sizeof(UInt16) + sizeof(UInt16) + sizeof(Int16); // nextBlock + blockNumber + addDataSize
+
+            if (this.IsEncrypted)
+            {
+                // The cipher permutes bytes within each 256-byte chunk of the
+                // physical block (header + records together), so individual
+                // records cannot be safely overwritten in place on disk.
+                // Instead: read the whole block back, decrypt it, splice in
+                // the updated record bytes, then re-encrypt and rewrite the
+                // whole block.
+                var rawBlock = new byte[blockSize];
+                this.stream.Position = blockPosition;
+                int totalRead = 0;
+                while (totalRead < blockSize)
+                {
+                    int n = this.stream.Read(rawBlock, totalRead, blockSize - totalRead);
+                    if (n <= 0) break;
+                    totalRead += n;
+                }
+                uint diskBlockNumber = (uint)(blockNumber + 1);
+                PxCrypt.DecryptDbBlock(rawBlock, 0, blockSize, this.EncryptionKey, diskBlockNumber);
+
+                foreach (var recIndex in blockRecIndices)
+                {
+                    Array.Copy(
+                        data, recIndex * this.RecordSize,
+                        rawBlock, blockHeaderSize + recIndex * this.RecordSize,
+                        this.RecordSize);
+                }
+
+                PxCrypt.EncryptDbBlock(rawBlock, 0, blockSize, this.EncryptionKey, diskBlockNumber);
+                this.stream.Position = blockPosition;
+                this.stream.Write(rawBlock, 0, rawBlock.Length);
+                return;
+            }
+
+            this.stream.Position = blockPosition + blockHeaderSize;
 
             using (var writer = new BinaryWriter(this.stream, Encoding.Default, true))
             {
