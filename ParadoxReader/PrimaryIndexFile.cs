@@ -86,9 +86,14 @@ namespace ParadoxReader
             System.Diagnostics.Debug.WriteLine(
                 $"[PrimaryIndexFile.OnBlockChanged] dbBlockNumber={dbBlockNumber}, recordCount={recordCount}");
 
+            // Leaf entries store the .DB block number 1-based (confirmed against
+            // a real 3-level SMSINSINGLE.DB/.PX pair), but dbBlockNumber (from
+            // ParadoxTableFile) is 0-based, so convert at this API boundary.
+            ushort pxBlockNumber = (ushort)(dbBlockNumber + 1);
+
             if (recordCount <= 0)
             {
-                RemoveBlockEntry(dbBlockNumber);
+                RemoveBlockEntry(pxBlockNumber);
                 return;
             }
 
@@ -97,7 +102,7 @@ namespace ParadoxReader
             if (pxFile.stream.Length <= pxFile.headerSize)
             {
                 var newLeaf = AllocateBlock();
-                newLeaf.Entries.Add(new PxEntry(keyData, dbBlockNumber, (ushort)recordCount));
+                newLeaf.Entries.Add(new PxEntry(keyData, pxBlockNumber, (ushort)recordCount));
                 WriteBlock(newLeaf);
                 UpdateRootBlockId(newLeaf.BlockNumber);
                 UpdateLevelCount(1);
@@ -105,7 +110,7 @@ namespace ParadoxReader
                 return;
             }
 
-            var existing = FindEntryForBlock(dbBlockNumber);
+            var existing = FindEntryForBlock(pxBlockNumber);
             if (existing.Block != null)
             {
                 var entry = existing.Block.Entries[existing.Index];
@@ -115,7 +120,7 @@ namespace ParadoxReader
                 return;
             }
 
-            BTreeInsert(new PxEntry(keyData, dbBlockNumber, (ushort)recordCount));
+            BTreeInsert(new PxEntry(keyData, pxBlockNumber, (ushort)recordCount));
             UpdateRecordCount(pxFile.RecordCount + 1);
         }
 

@@ -82,10 +82,9 @@ namespace ParadoxReader
 
                     if (!condition.IsIndexPossible(indexRec, nextRec)) continue;
 
-                    // Leaf entries store the .DB block number using the same
-                    // 0-based numbering ParadoxFile.GetBlock expects (see
-                    // PrimaryIndexFile.OnBlockChanged), so no conversion is needed.
-                    var block = this.table.GetBlock(entry.BlockNumber);
+                    // Leaf entries store the .DB block number 1-based, but
+                    // ParadoxFile.GetBlock indexes blocks 0-based, so convert here.
+                    var block = this.table.GetBlock((ushort)(entry.BlockNumber - 1));
                     for (int r = 0; r < block.RecordCount; r++)
                     {
                         var rec = block[r];

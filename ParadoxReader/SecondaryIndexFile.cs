@@ -117,9 +117,14 @@ namespace ParadoxReader
             System.Diagnostics.Debug.WriteLine(
                 $"[SecondaryIndexFile.OnBlockChanged] blockNumber={blockNumber}, recordCount={recordCount}");
 
+            // Leaf entries store the .DB block number 1-based (matching the
+            // real on-disk format confirmed against SMSINSINGLE.DB/.PX), but
+            // blockNumber (from ParadoxTableFile) is 0-based, so convert here.
+            ushort dbBlockNumber = (ushort)(blockNumber + 1);
+
             if (recordCount <= 0)
             {
-                RemoveBlockEntry(blockNumber);
+                RemoveBlockEntry(dbBlockNumber);
                 return;
             }
 
@@ -128,7 +133,7 @@ namespace ParadoxReader
             if (indexFile.stream.Length <= indexFile.headerSize || indexFile.RecordCount <= 0)
             {
                 var newLeaf = AllocateBlock();
-                newLeaf.Entries.Add(new PxEntry(keyData, blockNumber, (ushort)recordCount));
+                newLeaf.Entries.Add(new PxEntry(keyData, dbBlockNumber, (ushort)recordCount));
                 WriteBlock(newLeaf);
                 UpdateRootBlockId(newLeaf.BlockNumber);
                 UpdateLevelCount(1);
@@ -136,7 +141,7 @@ namespace ParadoxReader
                 return;
             }
 
-            var existing = FindEntryForBlock(blockNumber);
+            var existing = FindEntryForBlock(dbBlockNumber);
             if (existing.Block != null)
             {
                 var entry = existing.Block.Entries[existing.Index];
@@ -146,7 +151,7 @@ namespace ParadoxReader
                 return;
             }
 
-            BTreeInsert(new PxEntry(keyData, blockNumber, (ushort)recordCount));
+            BTreeInsert(new PxEntry(keyData, dbBlockNumber, (ushort)recordCount));
             UpdateRecordCount(indexFile.RecordCount + 1);
         }
 
@@ -213,7 +218,17 @@ namespace ParadoxReader
             PxBlock cur = node;
             while (cur != null)
             {
-                bool isLeaf = cur.Entries.Count == 0 || cur.Entries[0].RecordCount > 0;
+                // Branch entries always have RecordCount == 0 (see SplitChild),
+                // while leaf entries always have RecordCount > 0 (guarded in
+                // OnBlockChanged) - but that signal only exists when this
+                // index's pointer format actually stores a recordCount field
+                // (pointerSize >= 6). For narrower pointer formats (e.g.
+                // pointerSize == 2, observed on a real SMSINSINGLE.XG0),
+                // RecordCount is always 0 regardless of level, so fall back
+                // to the block-number-range heuristic in that case.
+                bool isLeaf = cur.Entries.Count == 0 || (pointerSize >= 6
+                    ? cur.Entries[0].RecordCount > 0
+                    : !IsValidIndexBlockNumber(cur.Entries[0].BlockNumber));
 
                 PxBlock chainNext = (cur.LeftChildBlockNumber != 0 && IsValidIndexBlockNumber(cur.LeftChildBlockNumber))
                     ? ReadBlock(cur.LeftChildBlockNumber) : null;
@@ -236,10 +251,9 @@ namespace ParadoxReader
                         bool possible = condition.IsIndexPossible(indexRec, nextRec);
                         if (!possible) continue;
 
-                        // Leaf entries store the .DB block number using the same
-                        // 0-based numbering ParadoxFile.GetBlock expects (see
-                        // OnBlockChanged), so no conversion is needed.
-                        var block = table.GetBlock(entry.BlockNumber);
+                        // Leaf entries store the .DB block number 1-based, but
+                        // ParadoxFile.GetBlock indexes blocks 0-based, so convert here.
+                        var block = table.GetBlock((ushort)(entry.BlockNumber - 1));
                         for (int r = 0; r < block.RecordCount; r++)
                         {
                             var rec = block[r];
