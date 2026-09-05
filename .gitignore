@@ -58,3 +58,4 @@ Temporary Items
 bin/
 obj/
 *.LCK
+ParadoxTest/SqlRunner.local.config.example
