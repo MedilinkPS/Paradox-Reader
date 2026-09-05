@@ -70,5 +70,22 @@ namespace ParadoxTest
                 return string.Empty;
             }
         }
+
+        // Machine-specific real-world corpus directory used by corpustest /
+        // xg0diag / xg0dumpmany default paths. Configured via appSettings key
+        // "CorpusDataRootPath", normally set in ParadoxTest\SqlRunner.local.config
+        // (git-ignored - see SqlRunner.local.config.example). Falls back to
+        // string.Empty when unset/missing.
+        internal static string GetCorpusDataRootPath()
+        {
+            try
+            {
+                return System.Configuration.ConfigurationManager.AppSettings["CorpusDataRootPath"] ?? string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
     }
 }

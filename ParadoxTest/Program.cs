@@ -66,11 +66,12 @@ namespace ParadoxTest
         private const int F_MONEYVAL     = 13; // MONEY
         private const int F_BYTESVAL     = 14; // BYTES(10)
 
-        // Hard-coded per user instructions; SQLRunner is used to independently
-        // verify (via SELECT) that writes performed by ParadoxReader are visible
+        // Machine-specific; sourced from app.config's appSettings (via
+        // SqlRunner.local.config, git-ignored) rather than hard-coded, so
+        // it's never committed. SQLRunner is used to independently verify
+        // (via SELECT) that writes performed by ParadoxReader are visible
         // to BDE, and to run Pdxrbld-equivalent consistency checks.
-        private const string SqlRunnerExePath =
-            @"XXXX";
+        private static string SqlRunnerExePath => Configuration.GetSqlRunnerExePath();
 
         // Paradox/BDE has historical issues with long paths and permissions on
         // some folders (Program Files, deeply nested repo paths, etc.), so all
@@ -82,7 +83,12 @@ namespace ParadoxTest
         // Both no-indices and no-secondary-index variants passed cleanly
         // after the block-chain fix; this is the final, most complete
         // variant to validate.
-        private const string TableName    = "TESTTAB.DB";
+        //
+        // Made non-const (was: private const string TableName = "TESTTAB.DB")
+        // so the standard test suite can be re-run against other empty
+        // fixture tables (e.g. TESTTAB_PASSWORDED.DB) via the "table"
+        // command-line mode, without duplicating ~1000 lines of test code.
+        private static string TableName = "TESTTAB.DB";
 
         private static string SourceDataFolder =>
             Path.Combine(Path.GetDirectoryName(Assembly.GetEntryAssembly().Location), "data");
@@ -98,6 +104,30 @@ namespace ParadoxTest
             if (args.Length > 0 && args[0] == "libcreatetest")
             {
                 LibUpdateTest.RunCreateTest();
+                return;
+            }
+
+            if (args.Length > 0 && args[0] == "pxpasswordtest")
+            {
+                RunPxPasswordTest();
+                return;
+            }
+
+            if (args.Length > 0 && args[0] == "pxpasswordwritetest")
+            {
+                string writeTestPath = args.Length > 1 ? args[1] : @"C:\temp\pxpwtest\testtab_passworded_withdata.DB";
+                RunPxPasswordWriteTest(writeTestPath);
+                return;
+            }
+
+            if (args.Length > 0 && args[0] == "corpustest")
+            {
+                // Usage: ParadoxTest.exe corpustest [corpusRoot] [maxTables] [filter]
+                string corpusRoot = args.Length > 1 ? args[1] : null;
+                int maxTables     = args.Length > 2 && int.TryParse(args[2], out var mt) ? mt : 400;
+                string filter     = args.Length > 3 ? args[3] : null;
+                Trace.Listeners.Add(new ConsoleTraceListener());
+                CorpusTest.Run(corpusRoot, maxTables, filter);
                 return;
             }
 
@@ -129,6 +159,29 @@ namespace ParadoxTest
                 return;
             }
 
+            if (args.Length > 0 && args[0] == "growpxindex")
+            {
+                int targetCount = args.Length > 1 && int.TryParse(args[1], out var n) ? n : 5000;
+                RunGrowPxIndexMode(targetCount);
+                return;
+            }
+
+            if (args.Length > 0 && args[0] == "suite")
+            {
+                // Usage: ParadoxTest.exe suite [TABLENAME.DB]
+                // Runs the standard Test 1-6 suite against the given fixture
+                // table (must exist in ParadoxTest\data alongside its
+                // .PX/.MB/secondary index files). Defaults to TESTTAB.DB.
+                TableName = args.Length > 1 ? args[1] : "TESTTAB.DB";
+                RunStandardTestSuite();
+                return;
+            }
+
+            RunStandardTestSuite();
+        }
+
+        private static void RunStandardTestSuite()
+        {
             ResetTestFolder();
 
             Console.WriteLine("=== Test 1: Append records ===");
@@ -1050,6 +1103,609 @@ namespace ParadoxTest
             // Round-trip: insert then delete a throwaway row via BDE itself.
             RunSqlRunner($"INSERT INTO '{tablePath}' (SECVAL) VALUES (-1)");
             RunSqlRunner($"DELETE FROM '{tablePath}' T WHERE T.'SECVAL' = -1");
+        }
+
+        // --------------------------------------------------------------------
+        // Diagnostic mode: exercise a real, user-supplied multi-level .PX
+        // table (TESTTAB_LARGEDATA.DB) to validate ParadoxPrimaryKey.Enumerate's
+        // non-leaf (indexLevel != 0) traversal against real data.
+        // --------------------------------------------------------------------
+        //
+        // TESTTAB_LARGEDATA.DB schema (per BB's Database Desktop structure info):
+        //   Id        N   (numeric, primary key)
+        //   Sender    C(255)
+        //   Recipient C(255)
+        //   Message   C(255)
+        //   Timestamp dt
+        //   SendId    C(255)
+        //   ReplyId   C(255)
+        // Indexes: primary key on Id; secondary index ReplyIdIndex on ReplyId.
+        //
+        // This table is large enough (.PX is ~670KB) that its primary index
+        // is expected to have grown past a single block/level, unlike the
+        // small TESTTAB.DB fixture used elsewhere in this harness. The user
+        // has indicated this is a disposable backup copy, so destructive
+        // operations (append/update/delete) are fine to run against it too.
+        // --------------------------------------------------------------------
+        // Password / encryption reverse-engineering validation.
+        //
+        // Validates our C# port of pxlib's px_crypt.c against the sample
+        // passworded tables (password = "password"):
+        //   1. Confirms PxCrypt.PasswordChecksum("password") matches the
+        //      encryption key actually stored in testtab_passworded.DB's header.
+        //   2. Confirms testtab_passworded_withdata.DB can be transparently
+        //      decrypted and enumerated using that key, producing the
+        //      expected rows.
+        // --------------------------------------------------------------------
+        private static void RunPxPasswordTest()
+        {
+            string dataDir = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "data");
+            string emptyPath = Path.Combine(dataDir, "testtab_passworded.DB");
+            string dataPath = Path.Combine(dataDir, "testtab_passworded_withdata.DB");
+
+            int checksum = ParadoxReader.PxCrypt.PasswordChecksum("password");
+            Console.WriteLine($"PxCrypt.PasswordChecksum(\"password\") = 0x{unchecked((uint)checksum):X8}");
+
+            using (var file = new ParadoxFile(emptyPath))
+            {
+                Console.WriteLine($"{Path.GetFileName(emptyPath)}: EncryptionKey = 0x{file.EncryptionKey:X8}, IsEncrypted = {file.IsEncrypted}");
+                bool match = file.EncryptionKey == unchecked((uint)checksum);
+                Console.WriteLine(match ? "MATCH: checksum algorithm confirmed." : "MISMATCH: checksum algorithm needs review.");
+            }
+
+            using (var table = new ParadoxTableFile(dataPath))
+            {
+                Console.WriteLine($"{Path.GetFileName(dataPath)}: EncryptionKey = 0x{table.EncryptionKey:X8}, RecordCount = {table.RecordCount}");
+                int rowNum = 0;
+                foreach (var rec in table.Enumerate())
+                {
+                    rowNum++;
+                    var values = string.Join(", ", rec.DataValues.Select(v => v?.ToString() ?? "<null>"));
+                    Console.WriteLine($"  Row {rowNum}: {values}");
+                }
+                Console.WriteLine(rowNum > 0 ? $"Decrypted and enumerated {rowNum} row(s) successfully." : "No rows enumerated - decryption may have failed.");
+            }
+        }
+
+        private static void RunPxPasswordWriteTest(string dbPath)
+        {
+            using (var table = new ParadoxTableFile(dbPath))
+            {
+                Console.WriteLine($"{Path.GetFileName(dbPath)}: EncryptionKey = 0x{table.EncryptionKey:X8}");
+
+                var rec = table.Enumerate().First();
+                Console.WriteLine("Before update: " + string.Join(", ", rec.DataValues.Select(v => v?.ToString() ?? "<null>")));
+
+                var newValues = (object[])rec.DataValues.Clone();
+                newValues[F_INTVAL] = 555555;
+                table.UpdateRecord(rec, newValues);
+            }
+
+            using (var table = new ParadoxTableFile(dbPath))
+            {
+                var rec = table.Enumerate().First();
+                Console.WriteLine("After update (reopened): " + string.Join(", ", rec.DataValues.Select(v => v?.ToString() ?? "<null>")));
+                bool ok = Convert.ToInt32(rec.DataValues[F_INTVAL]) == 555555;
+                Console.WriteLine(ok ? "WRITE PATH OK: encrypted round-trip verified." : "WRITE PATH FAILED.");
+
+                int rowCount = table.Enumerate().Count();
+                Console.WriteLine($"Row count after update: {rowCount}");
+            }
+        }
+
+        private static void RunTESTTAB_LARGEDATATests(string dbPath)
+        {
+            if (!File.Exists(dbPath))
+            {
+                Console.WriteLine("  [skip] {0} not found.", dbPath);
+                return;
+            }
+
+            using (var table = new ParadoxTableFile(dbPath))
+            {
+                int fId       = Array.IndexOf(table.FieldNames, "Id");
+                int fSender   = Array.IndexOf(table.FieldNames, "Sender");
+                int fRecipient= Array.IndexOf(table.FieldNames, "Recipient");
+                int fMessage  = Array.IndexOf(table.FieldNames, "Message");
+                int fTimestamp= Array.IndexOf(table.FieldNames, "Timestamp");
+                int fSendId   = Array.IndexOf(table.FieldNames, "SendId");
+                int fReplyId  = Array.IndexOf(table.FieldNames, "ReplyId");
+
+                Console.WriteLine("Fields: " + string.Join(", ", table.FieldNames));
+
+                var index = table.PrimaryKeyIndex;
+                Console.WriteLine("=== [smstest] .PX header info ===");
+                Console.WriteLine("  pxLevelCount={0}, pxRootBlockId={1}",
+                    index?.LevelCount, index?.RootBlockId);
+
+                if (index == null)
+                {
+                    Console.WriteLine("  [skip] No .PX file open; aborting further tests.");
+                    return;
+                }
+                if (index.LevelCount == 0)
+                {
+                    Console.WriteLine("  [note] pxLevelCount is 0 (single-level index); the " +
+                        "else/non-leaf traversal branch will NOT be exercised by this table either.");
+                }
+
+                // -----------------------------------------------------------
+                // Test A: Baseline full scan - establishes ground truth counts
+                // and min/max Id, without going through the .PX index at all.
+                // -----------------------------------------------------------
+                Console.WriteLine();
+                Console.WriteLine("=== [smstest] Test A: Full scan (baseline) ===");
+                int totalCount = 0;
+                int minId = int.MaxValue, maxId = int.MinValue;
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                foreach (var rec in table.Enumerate())
+                {
+                    totalCount++;
+                    int id = Convert.ToInt32(rec.DataValues[fId]);
+                    if (id < minId) minId = id;
+                    if (id > maxId) maxId = id;
+                }
+                Console.WriteLine("  Full scan: {0} record(s), Id range [{1}, {2}], {3:0.0}s",
+                    totalCount, minId, maxId, sw.Elapsed.TotalSeconds);
+
+                // -----------------------------------------------------------
+                // Test B: Primary-key (.PX) index lookup covering the FULL
+                // Id range. If the "else" (non-leaf) branch in
+                // ParadoxPrimaryKey.Enumerate has a bug (e.g. skipping the
+                // leftmost child subtree), this should return FEWER records
+                // than Test A's full-scan count.
+                // -----------------------------------------------------------
+                Console.WriteLine();
+                Console.WriteLine("=== [smstest] Test B: .PX index lookup, full Id range ===");
+                var fullRangeCondition =
+                    new ParadoxCondition.LogicalAnd(
+                        new ParadoxCondition.Compare(ParadoxCompareOperator.GreaterOrEqual, minId, fId, 0),
+                        new ParadoxCondition.Compare(ParadoxCompareOperator.LessOrEqual, maxId, fId, 0));
+
+                int viaIndexCount = 0;
+                sw.Restart();
+                using (var rdr = new ParadoxDataReader(table, index.Enumerate(fullRangeCondition)))
+                {
+                    while (rdr.Read()) viaIndexCount++;
+                }
+                Console.WriteLine("  .PX full-range lookup: {0} record(s), {1:0.0}s", viaIndexCount, sw.Elapsed.TotalSeconds);
+                Console.WriteLine(viaIndexCount == totalCount
+                    ? "  [PASS] .PX full-range count matches full-scan count."
+                    : string.Format("  [FAIL] .PX full-range count ({0}) != full-scan count ({1}) - missing {2} record(s).",
+                        viaIndexCount, totalCount, totalCount - viaIndexCount));
+
+                // -----------------------------------------------------------
+                // Test C: Narrow .PX range at the LOW end (near minId), where
+                // a missing-leftmost-child bug would most likely manifest.
+                // -----------------------------------------------------------
+                Console.WriteLine();
+                Console.WriteLine("=== [smstest] Test C: .PX index lookup, low end of Id range ===");
+                int lowUpper = minId + Math.Max(1, (int)((maxId - minId) * 0.01));
+                var lowCondition =
+                    new ParadoxCondition.LogicalAnd(
+                        new ParadoxCondition.Compare(ParadoxCompareOperator.GreaterOrEqual, minId, fId, 0),
+                        new ParadoxCondition.Compare(ParadoxCompareOperator.LessOrEqual, lowUpper, fId, 0));
+
+                int lowExpected = 0;
+                foreach (var rec in table.Enumerate())
+                    if (Convert.ToInt32(rec.DataValues[fId]) <= lowUpper) lowExpected++;
+
+                int lowViaIndex = 0;
+                using (var rdr = new ParadoxDataReader(table, index.Enumerate(lowCondition)))
+                {
+                    while (rdr.Read()) lowViaIndex++;
+                }
+                Console.WriteLine("  Id in [{0}, {1}]: expected={2}, via .PX={3}", minId, lowUpper, lowExpected, lowViaIndex);
+                Console.WriteLine(lowViaIndex == lowExpected
+                    ? "  [PASS] Low-end range matches."
+                    : string.Format("  [FAIL] Low-end range mismatch (missing {0} record(s)) - consistent with a missed leftmost child subtree.",
+                        lowExpected - lowViaIndex));
+
+                // -----------------------------------------------------------
+                // Test D: Narrow .PX range at the HIGH end (near maxId), as a
+                // contrast case (rightmost child pointers are read via each
+                // entry's own BlockNumber, so this should already work even
+                // if the leftmost-child bug exists).
+                // -----------------------------------------------------------
+                Console.WriteLine();
+                Console.WriteLine("=== [smstest] Test D: .PX index lookup, high end of Id range ===");
+                int highLower = maxId - Math.Max(1, (int)((maxId - minId) * 0.01));
+                var highCondition =
+                    new ParadoxCondition.LogicalAnd(
+                        new ParadoxCondition.Compare(ParadoxCompareOperator.GreaterOrEqual, highLower, fId, 0),
+                        new ParadoxCondition.Compare(ParadoxCompareOperator.LessOrEqual, maxId, fId, 0));
+
+                int highExpected = 0;
+                foreach (var rec in table.Enumerate())
+                    if (Convert.ToInt32(rec.DataValues[fId]) >= highLower) highExpected++;
+
+                int highViaIndex = 0;
+                using (var rdr = new ParadoxDataReader(table, index.Enumerate(highCondition)))
+                {
+                    while (rdr.Read()) highViaIndex++;
+                }
+                Console.WriteLine("  Id in [{0}, {1}]: expected={2}, via .PX={3}", highLower, maxId, highExpected, highViaIndex);
+                Console.WriteLine(highViaIndex == highExpected
+                    ? "  [PASS] High-end range matches."
+                    : string.Format("  [FAIL] High-end range mismatch (missing {0} record(s)).",
+                        highExpected - highViaIndex));
+
+                // -----------------------------------------------------------
+                // Test E: Secondary index (ReplyIdIndex on ReplyId), if open,
+                // exercised the same way as the primary key, in case its own
+                // non-leaf traversal (SecondaryIndexFile.EnumerateNode) has
+                // an analogous issue.
+                // -----------------------------------------------------------
+                Console.WriteLine();
+                Console.WriteLine("=== [smstest] Test E: Secondary index (ReplyId) sanity check ===");
+                var replyIndex = table.SecondaryIndexes.FirstOrDefault(idx =>
+                    idx.FieldIndices.Length > 0 && idx.FieldIndices[0] == fReplyId);
+
+                if (replyIndex == null)
+                {
+                    Console.WriteLine("  [skip] No secondary index over ReplyId is open for this table.");
+                }
+                else
+                {
+                    // Pick a real, non-empty ReplyId value from the data to
+                    // query for, rather than guessing.
+                    string sampleReplyId = null;
+                    int sampleReplyIdCount = 0;
+                    foreach (var rec in table.Enumerate())
+                    {
+                        var val = rec.DataValues[fReplyId] as string;
+                        if (!string.IsNullOrEmpty(val))
+                        {
+                            if (sampleReplyId == null) sampleReplyId = val;
+                            if (val == sampleReplyId) sampleReplyIdCount++;
+                        }
+                    }
+
+                    if (sampleReplyId == null)
+                    {
+                        Console.WriteLine("  [skip] No non-empty ReplyId values found in this table.");
+                    }
+                    else
+                    {
+                        int replyIdIndexPos = Array.IndexOf(replyIndex.FieldIndices, fReplyId);
+                        var replyCondition = new ParadoxCondition.Compare(
+                            ParadoxCompareOperator.Equal, sampleReplyId, fReplyId, replyIdIndexPos);
+
+                        int viaReplyIndex = 0;
+                        using (var rdr = new ParadoxDataReader(table, replyIndex.Enumerate(replyCondition)))
+                        {
+                            while (rdr.Read()) viaReplyIndex++;
+                        }
+                        Console.WriteLine("  ReplyId='{0}': expected={1} (full scan), via secondary index={2}",
+                            sampleReplyId, sampleReplyIdCount, viaReplyIndex);
+                        Console.WriteLine(viaReplyIndex == sampleReplyIdCount
+                            ? "  [PASS] Secondary index count matches."
+                            : string.Format("  [FAIL] Secondary index count mismatch (expected {0}, got {1}).",
+                                sampleReplyIdCount, viaReplyIndex));
+                    }
+                }
+
+                Console.WriteLine();
+                Console.WriteLine("[smstest] Done.");
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // Diagnostic mode: recreate a fresh equivalent table + composite
+        // secondary index via SQLRunner and diff its .XG0 against a corrupt
+        // corpus .XG0 file, byte-for-byte, to determine whether observed
+        // mismatches (e.g. PracticeCorrespond.XG0's on-disk RecordSize=10 vs
+        // the 12 our field-mapping computes) are a code-side bug or genuine
+        // data corruption / Paradox-version drift.
+        // --------------------------------------------------------------------
+        private static void RunXg0DiagMode(string corruptXG0Path)
+        {
+            const string diagFolder = @"c:\temp\xg0diag";
+            const string diagTable  = "XG0DIAGTAB";
+
+            if (!File.Exists(corruptXG0Path))
+            {
+                Console.WriteLine("[xg0diag] Corrupt reference file not found: {0}", corruptXG0Path);
+                return;
+            }
+
+            Directory.CreateDirectory(diagFolder);
+            foreach (var f in Directory.GetFiles(diagFolder))
+            {
+                try { File.Delete(f); } catch { /* best effort */ }
+            }
+
+            string tablePath = Path.Combine(diagFolder, diagTable + ".DB");
+
+            // Recreate PracticeCorrespond's schema as discovered from the corpus
+            // .DB header: Id AUTOINC (PK), PracticeId INTEGER, CorrespondenceMethodId
+            // INTEGER, CarrierMethodIdentifier CHAR(255), CarrierOutputPath CHAR(255).
+            string createTableSql =
+                "CREATE TABLE '" + tablePath + "' (" +
+                "Id AUTOINC, " +
+                "PracticeId INTEGER, " +
+                "CorrespondenceMethodId INTEGER, " +
+                "CarrierMethodIdentifier CHARACTER(255), " +
+                "CarrierOutputPath CHARACTER(255), " +
+                "PRIMARY KEY (Id))";
+
+            string createIndexSql =
+                "CREATE INDEX SECIDX ON '" + tablePath + "' (PracticeId, CorrespondenceMethodId)";
+
+            Console.WriteLine("[xg0diag] Creating fresh reference table via SQLRunner...");
+            RunDiagSqlRunner(diagFolder, createTableSql);
+            RunDiagSqlRunner(diagFolder, createIndexSql);
+
+            if (!File.Exists(tablePath))
+            {
+                Console.WriteLine("[xg0diag] SQLRunner did not produce {0}; aborting.", tablePath);
+                return;
+            }
+
+            Console.WriteLine("[xg0diag] Inserting rows via SQLRunner...");
+            for (int i = 1; i <= 6; i++)
+            {
+                string insertSql =
+                    "INSERT INTO '" + tablePath + "' " +
+                    "(PracticeId, CorrespondenceMethodId, CarrierMethodIdentifier, CarrierOutputPath) VALUES (" +
+                    i + ", " + (i % 3) + ", 'method" + i + "', 'path" + i + "')";
+                RunDiagSqlRunner(diagFolder, insertSql);
+            }
+
+            string freshXG0Path = Path.Combine(diagFolder, diagTable + ".XG0");
+            if (!File.Exists(freshXG0Path))
+            {
+                Console.WriteLine("[xg0diag] Fresh .XG0 was not created at {0}; aborting comparison.", freshXG0Path);
+                return;
+            }
+
+            Console.WriteLine();
+            Console.WriteLine("=== [xg0diag] Fresh reference: {0} ===", freshXG0Path);
+            DumpIndexFile(freshXG0Path);
+
+            Console.WriteLine();
+            Console.WriteLine("=== [xg0diag] Corrupt corpus file: {0} ===", corruptXG0Path);
+            DumpIndexFile(corruptXG0Path);
+        }
+
+        /// <summary>
+        /// Dumps an .Xnn/.Xgn/.Ynn/.Ygn index file's header fields, own field
+        /// definitions, and root-block entries to the console for manual
+        /// comparison. Uses the same on-disk offsets ParadoxFile.ReadHeader
+        /// and SecondaryIndexFile.ReadBlock rely on.
+        /// </summary>
+        private static void DumpIndexFile(string path)
+        {
+            using (var f = new ParadoxFile(path))
+            {
+                Console.WriteLine("  RecordSize={0}, HeaderSize={1}, FileType={2}, maxTableSize={3}, RecordCount={4}",
+                    f.RecordSize, f.headerSize, f.FileType, f.maxTableSize, f.RecordCount);
+                Console.WriteLine("  nextBlock={0}, fileBlocks={1}, firstBlock={2}, lastBlock={3}",
+                    f.nextBlock, f.fileBlocks, f.firstBlock, f.lastBlock);
+                Console.WriteLine("  indexFieldNumber={0}, pxRootBlockId={1}, pxLevelCount={2}, FieldCount={3}, primaryKeyFields={4}",
+                    f.indexFieldNumber, f.pxRootBlockId, f.pxLevelCount, f.FieldCount, f.primaryKeyFields);
+                Console.WriteLine("  fileVersionID={0}, maxBlocks={1}, changeCount1={2}, changeCount2={3}, autoIncVal={4}",
+                    f.fileVersionID, f.maxBlocks, f.changeCount1, f.changeCount2, f.autoIncVal);
+                Console.WriteLine("  encryption1={0}, indexUpdateRequired={1}",
+                    f.EncryptionKey, f.indexUpdateRequired);
+
+                if (f.FieldTypes != null)
+                {
+                    for (int i = 0; i < f.FieldTypes.Length; i++)
+                    {
+                        Console.WriteLine("  field[{0}] type={1} size={2}",
+                            i, f.FieldTypes[i].fType, f.FieldTypes[i].fSize);
+                    }
+                }
+
+                int blockSize = f.maxTableSize * 0x400;
+                long rootPos  = f.headerSize + (long)f.pxRootBlockId * blockSize;
+                // Try both 0-based and 1-based root block interpretations, same
+                // as SecondaryIndexFile.ResolveBlockBase, and print whichever
+                // resolves to a valid in-file position.
+                long rootPos0 = f.headerSize + (long)f.pxRootBlockId * blockSize;
+                long rootPos1 = f.headerSize + (long)(f.pxRootBlockId - 1) * blockSize;
+                long chosenPos = (rootPos1 >= f.headerSize && rootPos1 + blockSize <= f.stream.Length) ? rootPos1 : rootPos0;
+
+                if (chosenPos < f.headerSize || chosenPos + blockSize > f.stream.Length)
+                {
+                    Console.WriteLine("  [root block position out of range: {0}, streamLength={1}]", chosenPos, f.stream.Length);
+                    return;
+                }
+
+                f.stream.Position = chosenPos;
+                var raw = new byte[blockSize];
+                int totalRead = 0;
+                while (totalRead < blockSize)
+                {
+                    int n = f.stream.Read(raw, totalRead, blockSize - totalRead);
+                    if (n <= 0) break;
+                    totalRead += n;
+                }
+
+                ushort leftChild = BitConverter.ToUInt16(raw, 0);
+                ushort reserved  = BitConverter.ToUInt16(raw, 2);
+                ushort usedBytes = BitConverter.ToUInt16(raw, 4);
+                Console.WriteLine("  rootBlock @ {0}: leftChild={1}, reserved={2}, usedBytes={3}",
+                    chosenPos, leftChild, reserved, usedBytes);
+
+                int keyDataSize = 0;
+                if (f.FieldTypes != null)
+                    foreach (var ft in f.FieldTypes) keyDataSize += ft.fSize;
+
+                int pointerSize = f.RecordSize > keyDataSize ? f.RecordSize - keyDataSize : 6;
+                int entrySize   = keyDataSize + pointerSize;
+                Console.WriteLine("  derived: keyDataSize={0}, pointerSize={1}, entrySize={2}", keyDataSize, pointerSize, entrySize);
+
+                int entryCount = usedBytes == 0 ? 1 : (usedBytes / entrySize) + 1;
+                int pos = 6;
+                for (int i = 0; i < entryCount && pos + entrySize <= blockSize; i++)
+                {
+                    var keyBytes = new byte[keyDataSize];
+                    Array.Copy(raw, pos, keyBytes, 0, keyDataSize);
+                    string keyHex = BitConverter.ToString(keyBytes);
+
+                    ushort bnEnc = (ushort)((raw[pos + keyDataSize] << 8) | raw[pos + keyDataSize + 1]);
+                    ushort bn    = (ushort)(bnEnc ^ 0x8000);
+
+                    ushort rc = 0;
+                    if (pointerSize >= 6)
+                    {
+                        ushort rcEnc = (ushort)((raw[pos + keyDataSize + 2] << 8) | raw[pos + keyDataSize + 3]);
+                        rc = (ushort)(rcEnc ^ 0x8000);
+                    }
+
+                    Console.WriteLine("  entry[{0}] key={1} bn={2} rc={3}", i, keyHex, bn, rc);
+                    pos += entrySize;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Minimal, self-contained SQLRunner invocation for xg0diag mode
+        /// (mirrors CorpusTest.RunSqlRunner).
+        /// </summary>
+        private static void RunDiagSqlRunner(string workDir, string sql)
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName               = SqlRunnerExePath,
+                Arguments              = $"/S \"{sql}\"",
+                UseShellExecute        = false,
+                RedirectStandardInput  = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError  = true,
+                CreateNoWindow         = true
+            };
+
+            using (var process = new Process { StartInfo = psi })
+            {
+                // Drain stdout/stderr asynchronously - SQLRunner can write enough
+                // output to fill the redirected pipe buffer, which would otherwise
+                // deadlock the process (and cause WaitForExit to time out and get
+                // killed before it finishes/flushes the operation to disk).
+                process.OutputDataReceived += (s, e) => { };
+                process.ErrorDataReceived  += (s, e) => { };
+                process.Start();
+                process.BeginOutputReadLine();
+                process.BeginErrorReadLine();
+
+                try
+                {
+                    process.StandardInput.WriteLine();
+                    process.StandardInput.Flush();
+                }
+                catch { /* process may have already exited */ }
+
+                if (!process.WaitForExit(10000))
+                {
+                    try
+                    {
+                        using (var killer = new Process())
+                        {
+                            killer.StartInfo = new ProcessStartInfo
+                            {
+                                FileName        = "taskkill",
+                                Arguments       = $"/PID {process.Id} /T /F",
+                                UseShellExecute = false,
+                                CreateNoWindow  = true,
+                                RedirectStandardOutput = true,
+                                RedirectStandardError  = true
+                            };
+                            killer.Start();
+                            killer.WaitForExit(5000);
+                        }
+                    }
+                    catch { /* best effort */ }
+                    try { if (!process.HasExited) process.Kill(); } catch { /* best effort */ }
+                    process.WaitForExit();
+                }
+            }
+
+            System.Threading.Thread.Sleep(300);
+
+            foreach (var lockFile in Directory.GetFiles(workDir, "*.LCK"))
+            {
+                try { File.Delete(lockFile); } catch { /* best effort */ }
+            }
+        }
+
+        // --------------------------------------------------------------------
+        // Diagnostic mode: grow the .PX primary index past a single level
+        // --------------------------------------------------------------------
+        //
+        // Bulk-appends records via ParadoxReader (fast, no BDE round trip)
+        // until the .PX file's pxLevelCount (exposed via the new
+        // ParadoxPrimaryKey.LevelCount/RootBlockId test-only properties)
+        // exceeds 0, i.e. the primary index root block has split and the
+        // tree now has an internal (non-leaf) level. This lets us observe
+        // whether ParadoxPrimaryKey.Enumerate's "else" (indexLevel != 0)
+        // branch is reachable/correct on a real multi-level index, before
+        // deciding whether any fix is needed.
+        private static void RunGrowPxIndexMode(int targetCount)
+        {
+            ResetTestFolder();
+
+            int lastReportedLevel = -1;
+            int appended = 0;
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+
+            using (var table = new ParadoxTableFile(TestFolder, TableName))
+            {
+                for (int i = 1; i <= targetCount; i++)
+                {
+                    var values = MakeSampleFieldValues((short)(i % 30000), "grow" + i);
+                    table.AppendRecord(values);
+                    appended++;
+
+                    var level = table.PrimaryKeyIndex?.LevelCount ?? -1;
+                    if (level != lastReportedLevel)
+                    {
+                        Console.WriteLine(
+                            "  [growpxindex] after {0} appended records ({1:0.0}s elapsed): pxLevelCount={2}, pxRootBlockId={3}",
+                            appended, sw.Elapsed.TotalSeconds, level, table.PrimaryKeyIndex?.RootBlockId);
+                        lastReportedLevel = level;
+                    }
+                    else if (appended % 1000 == 0)
+                    {
+                        Console.WriteLine(
+                            "  [growpxindex] progress: {0} appended ({1:0.0}s elapsed), pxLevelCount={2}",
+                            appended, sw.Elapsed.TotalSeconds, level);
+                    }
+                }
+
+                Console.WriteLine(
+                    "[growpxindex] Done. Appended {0} records; final pxLevelCount={1}, pxRootBlockId={2}",
+                    appended, table.PrimaryKeyIndex?.LevelCount, table.PrimaryKeyIndex?.RootBlockId);
+            }
+
+            if (GetLastPxLevel() > 0)
+            {
+                Console.WriteLine();
+                Console.WriteLine("=== [growpxindex] Verifying with SQLRunner (Pdxrbld-equivalent) ===");
+                TestVerifyWithSqlRunner();
+
+                Console.WriteLine();
+                Console.WriteLine("=== [growpxindex] Condition + primary index lookup smoke test ===");
+                TestConditionIndexLookup();
+            }
+            else
+            {
+                Console.WriteLine(
+                    "[growpxindex] pxLevelCount never exceeded 0 after {0} records; " +
+                    "increase targetCount (pass as second arg) and re-run.", appended);
+            }
+        }
+
+        // Small helper so the post-loop checks above can re-open the table
+        // read-only to confirm the on-disk pxLevelCount after the using
+        // block above has closed/flushed it.
+        private static int GetLastPxLevel()
+        {
+            using (var table = new ParadoxTableFile(TestFolder, TableName))
+            {
+                return table.PrimaryKeyIndex?.LevelCount ?? -1;
+            }
         }
 
         private static void RunSqlRunner(string sql)
