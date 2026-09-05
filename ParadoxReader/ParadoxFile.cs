@@ -96,6 +96,15 @@ namespace ParadoxReader
         /// Checks whether <paramref name="password"/> matches the password used to
         /// protect this table. If the table is not password-protected, this returns
         /// true only for a null or empty password.
+        ///
+        /// This library never gates reading or writing on a password - decrypting a
+        /// table's data only requires the key stored in its own header (see
+        /// <see cref="EncryptionKey"/>/<see cref="IsEncrypted"/>), not the original
+        /// password itself. VerifyPassword/ChangePassword/RemovePassword are provided
+        /// purely as optional conveniences for consumers who want to enforce their
+        /// own password prompt/check before allowing access; they are not called
+        /// anywhere internally. Check <see cref="IsEncrypted"/> to know up front
+        /// whether a table is password-protected at all.
         /// </summary>
         public bool VerifyPassword(string password)
         {
@@ -109,7 +118,9 @@ namespace ParadoxReader
         /// <summary>
         /// Re-encrypts the table with a new password. <paramref name="currentPassword"/>
         /// must match the table's existing password (or be null/empty if the table is
-        /// not currently password-protected).
+        /// not currently password-protected). This is an optional operation for
+        /// consumers that want to manage passwords explicitly; nothing in this
+        /// library requires calling it.
         /// </summary>
         public void ChangePassword(string currentPassword, string newPassword)
         {
@@ -123,7 +134,9 @@ namespace ParadoxReader
 
         /// <summary>
         /// Removes password protection from the table. <paramref name="currentPassword"/>
-        /// must match the table's existing password.
+        /// must match the table's existing password. This is an optional operation
+        /// for consumers that want to manage passwords explicitly; nothing in this
+        /// library requires calling it.
         /// </summary>
         public void RemovePassword(string currentPassword)
         {

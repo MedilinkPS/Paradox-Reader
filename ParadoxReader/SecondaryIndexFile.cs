@@ -707,6 +707,13 @@ namespace ParadoxReader
         // Block I/O
         // ----------------------------------------------------------------
 
+        // NOTE: .Xnn/.Ynn (secondary index) blocks are never encrypted/decrypted
+        // here, even when the parent table is password-protected. Paradox/pxlib
+        // only cipher .DB data blocks; the encryption key is merely replicated
+        // into the index file's header (via the 0xFF00FF00 sentinel + V4 header
+        // Encryption2, see ParadoxFile.EncryptionKey) but the index B-tree block
+        // contents themselves are always stored in plaintext. This is
+        // intentional, not a gap.
         private PxBlock ReadBlock(ushort blockNumber)
         {
             var block = new PxBlock { BlockNumber = blockNumber, Capacity = blockCapacity };
