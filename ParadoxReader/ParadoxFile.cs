@@ -92,6 +92,110 @@ namespace ParadoxReader
 
         public bool IsEncrypted => EncryptionKey != 0;
 
+        /// <summary>
+        /// Checks whether <paramref name="password"/> matches the password used to
+        /// protect this table. If the table is not password-protected, this returns
+        /// true only for a null or empty password.
+        /// </summary>
+        public bool VerifyPassword(string password)
+        {
+            if (!IsEncrypted)
+            {
+                return string.IsNullOrEmpty(password);
+            }
+            return unchecked((uint)PxCrypt.PasswordChecksum(password ?? string.Empty)) == EncryptionKey;
+        }
+
+        /// <summary>
+        /// Re-encrypts the table with a new password. <paramref name="currentPassword"/>
+        /// must match the table's existing password (or be null/empty if the table is
+        /// not currently password-protected).
+        /// </summary>
+        public void ChangePassword(string currentPassword, string newPassword)
+        {
+            if (!VerifyPassword(currentPassword))
+            {
+                throw new InvalidOperationException("The supplied current password is incorrect.");
+            }
+            uint newKey = string.IsNullOrEmpty(newPassword) ? 0u : unchecked((uint)PxCrypt.PasswordChecksum(newPassword));
+            SetEncryptionKey(newKey);
+        }
+
+        /// <summary>
+        /// Removes password protection from the table. <paramref name="currentPassword"/>
+        /// must match the table's existing password.
+        /// </summary>
+        public void RemovePassword(string currentPassword)
+        {
+            if (!VerifyPassword(currentPassword))
+            {
+                throw new InvalidOperationException("The supplied current password is incorrect.");
+            }
+            SetEncryptionKey(0);
+        }
+
+        /// <summary>
+        /// Decrypts every data block with the current key (if any) and re-encrypts
+        /// with <paramref name="newKey"/> (0 meaning no encryption), then persists the
+        /// new key to whichever header field currently supplies it.
+        /// </summary>
+        private void SetEncryptionKey(uint newKey)
+        {
+            uint oldKey = this.EncryptionKey;
+            if (oldKey == newKey)
+            {
+                return;
+            }
+
+            int blockSize = this.maxTableSize * 0x0400;
+            for (ushort blockNumber = 0; blockNumber < this.fileBlocks; blockNumber++)
+            {
+                long blockPosition = blockNumber * (long)blockSize + this.headerSize;
+                var rawBlock = new byte[blockSize];
+                this.stream.Position = blockPosition;
+                int totalRead = 0;
+                while (totalRead < blockSize)
+                {
+                    int n = this.stream.Read(rawBlock, totalRead, blockSize - totalRead);
+                    if (n <= 0) break;
+                    totalRead += n;
+                }
+
+                uint diskBlockNumber = (uint)(blockNumber + 1);
+                if (oldKey != 0)
+                {
+                    PxCrypt.DecryptDbBlock(rawBlock, 0, blockSize, oldKey, diskBlockNumber);
+                }
+                if (newKey != 0)
+                {
+                    PxCrypt.EncryptDbBlock(rawBlock, 0, blockSize, newKey, diskBlockNumber);
+                }
+
+                this.stream.Position = blockPosition;
+                this.stream.Write(rawBlock, 0, rawBlock.Length);
+            }
+
+            // encryption1 (header offset 0x25) holds the real key, unless it is the
+            // 0xFF00FF00 sentinel, in which case the real key lives in encryption2
+            // within the V4 header (offset 0x5C, right after fileVerID2/fileVerID3).
+            if (unchecked((uint)this.encryption1) == 0xFF00FF00 && this.V4Header != null)
+            {
+                this.V4Header.encryption2 = unchecked((int)newKey);
+                this.stream.Position = 0x5C;
+            }
+            else
+            {
+                this.encryption1 = unchecked((int)newKey);
+                this.stream.Position = 0x25;
+            }
+
+            using (var writer = new BinaryWriter(this.stream, Encoding.Default, true))
+            {
+                writer.Write(unchecked((int)newKey));
+            }
+            this.stream.Flush();
+        }
+
         public ParadoxFile(string filePath) : this(new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
         {
         }

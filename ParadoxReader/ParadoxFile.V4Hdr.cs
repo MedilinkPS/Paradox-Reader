@@ -8,7 +8,7 @@ namespace ParadoxReader
         {
             short fileVerID2;
             short fileVerID3;
-            int encryption2;
+            internal int encryption2;
             public int Encryption2 => encryption2;
             int fileUpdateTime;  // 4.0 only
             ushort hiFieldID;
