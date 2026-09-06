@@ -202,7 +202,7 @@ namespace ParadoxReader
                 this.stream.Position = 0x25;
             }
 
-            using (var writer = new BinaryWriter(this.stream, Encoding.Default, true))
+            using (var writer = new BinaryWriter(new NonClosingStreamWrapper(this.stream), Encoding.Default))
             {
                 writer.Write(unchecked((int)newKey));
             }
@@ -418,7 +418,7 @@ namespace ParadoxReader
 
             this.stream.Position = blockPosition + blockHeaderSize;
 
-            using (var writer = new BinaryWriter(this.stream, Encoding.Default, true))
+            using (var writer = new BinaryWriter(new NonClosingStreamWrapper(this.stream), Encoding.Default))
             {
                 foreach (var recIndex in blockRecIndices)
                 {

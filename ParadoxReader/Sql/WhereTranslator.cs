@@ -20,7 +20,7 @@ namespace ParadoxReader.Sql
         /// each field's native CLR representation.
         /// </summary>
         public static Predicate<ParadoxRecord> ToPredicate(WhereExpr expr, ParadoxFile table,
-            IReadOnlyDictionary<string, object> parameters = null)
+            IDictionary<string, object> parameters = null)
         {
             if (expr == null) return null;
             var compiled = Compile(expr, table, parameters);
@@ -28,7 +28,7 @@ namespace ParadoxReader.Sql
         }
 
         private static Func<ParadoxRecord, bool> Compile(WhereExpr expr, ParadoxFile table,
-            IReadOnlyDictionary<string, object> parameters)
+            IDictionary<string, object> parameters)
         {
             switch (expr)
             {
@@ -99,7 +99,7 @@ namespace ParadoxReader.Sql
         /// comparison eligible for primary-index traversal (falls back to full scan).
         /// </summary>
         public static ParadoxCondition TryBuildPrimaryIndexCondition(WhereExpr expr, ParadoxFile table,
-            IReadOnlyDictionary<string, object> parameters = null)
+            IDictionary<string, object> parameters = null)
         {
             if (!(expr is WhereComparison cmp)) return null;
             if (cmp.Operator != ParadoxCompareOperator.Equal &&

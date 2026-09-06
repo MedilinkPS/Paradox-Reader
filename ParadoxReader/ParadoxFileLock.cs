@@ -60,7 +60,7 @@ namespace ParadoxReader
             mutex = new Mutex(false, mutexName);
             if (!mutex.WaitOne(LOCK_TIMEOUT_MS))
             {
-                mutex.Dispose();
+                mutex.Close();
                 mutex = null;
                 throw new TimeoutException(
                     $"Could not acquire in-process lock for '{lckFilePath}' " +
@@ -153,7 +153,7 @@ namespace ParadoxReader
             if (mutex == null) return;
             try   { mutex.ReleaseMutex(); }
             catch { /* Already released */ }
-            mutex.Dispose();
+            mutex.Close();
             mutex = null;
         }
 

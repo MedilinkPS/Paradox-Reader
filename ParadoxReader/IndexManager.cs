@@ -24,7 +24,7 @@ namespace ParadoxReader
         /// All secondary (.Xnn/.Xgn/.Ynn/.Ygn) index files discovered and
         /// opened for the parent table, in discovery order.
         /// </summary>
-        internal IReadOnlyList<SecondaryIndexFile> SecondaryIndexes => secondaryIndexes;
+        internal List<SecondaryIndexFile> SecondaryIndexes => secondaryIndexes;
 
         /// <summary>
         /// True if any opened index file (.PX/.Xnn/.Xgn/.Ynn/.Ygn) was

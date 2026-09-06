@@ -60,7 +60,7 @@ namespace ParadoxReader
         /// index file, allowing condition-based index lookups analogous to
         /// <see cref="PrimaryKeyIndex"/>.
         /// </summary>
-        public IReadOnlyList<SecondaryIndexHandle> SecondaryIndexes
+        public List<SecondaryIndexHandle> SecondaryIndexes
         {
             get
             {
@@ -109,7 +109,7 @@ namespace ParadoxReader
             {
                 long savedPos = stream.Position;
                 stream.Position = ParadoxHeaderOffsets.ChangeCount4;
-                using (var r = new BinaryReader(stream, Encoding.Default, leaveOpen: true))
+                using (var r = new BinaryReader(new NonClosingStreamWrapper(stream), Encoding.Default))
                     tableVersion = r.ReadInt16();
                 stream.Position = savedPos;
             }
@@ -298,7 +298,7 @@ namespace ParadoxReader
         private void WriteAutoIncValToHeader()
         {
             stream.Position = ParadoxHeaderOffsets.AutoIncVal;
-            using (var w = new BinaryWriter(stream, Encoding.Default, leaveOpen: true))
+            using (var w = new BinaryWriter(new NonClosingStreamWrapper(stream), Encoding.Default))
                 w.Write(autoIncVal);
         }
 
@@ -457,7 +457,7 @@ namespace ParadoxReader
         private void WriteRecordCountToHeader()
         {
             stream.Position = ParadoxHeaderOffsets.RecordCount;
-            using (var w = new BinaryWriter(stream, Encoding.Default, leaveOpen: true))
+            using (var w = new BinaryWriter(new NonClosingStreamWrapper(stream), Encoding.Default))
                 w.Write(RecordCount);
         }
 
@@ -477,7 +477,7 @@ namespace ParadoxReader
             if (V4Header != null) V4Header.changeCount4 = newValue;
 
             stream.Position = ParadoxHeaderOffsets.ChangeCount4;
-            using (var w = new BinaryWriter(stream, Encoding.Default, leaveOpen: true))
+            using (var w = new BinaryWriter(new NonClosingStreamWrapper(stream), Encoding.Default))
                 w.Write(newValue);
         }
 
@@ -490,7 +490,7 @@ namespace ParadoxReader
         private void WriteBlockHeadersToFileHeader()
         {
             stream.Position = ParadoxHeaderOffsets.BlockChain;
-            using (var w = new BinaryWriter(stream, Encoding.Default, leaveOpen: true))
+            using (var w = new BinaryWriter(new NonClosingStreamWrapper(stream), Encoding.Default))
             {
                 w.Write(nextBlock);
                 w.Write(fileBlocks);
@@ -505,7 +505,7 @@ namespace ParadoxReader
             {
                 maxBlocks = fileBlocks;
                 stream.Position = ParadoxHeaderOffsets.MaxBlocks;
-                using (var w = new BinaryWriter(stream, Encoding.Default, leaveOpen: true))
+                using (var w = new BinaryWriter(new NonClosingStreamWrapper(stream), Encoding.Default))
                     w.Write(maxBlocks);
             }
         }
@@ -522,7 +522,7 @@ namespace ParadoxReader
             if (changeCount1 == 0) changeCount2++; // carry on overflow
 
             stream.Position = ParadoxHeaderOffsets.ChangeCount1;
-            using (var w = new BinaryWriter(stream, Encoding.Default, leaveOpen: true))
+            using (var w = new BinaryWriter(new NonClosingStreamWrapper(stream), Encoding.Default))
             {
                 w.Write(changeCount1);
                 w.Write(changeCount2);

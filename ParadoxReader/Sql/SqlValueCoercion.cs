@@ -21,7 +21,7 @@ namespace ParadoxReader.Sql
         /// <see cref="ParadoxTableFile"/> for a given field.
         /// </summary>
         public static object Coerce(SqlValue value, ParadoxFile.FieldInfo field,
-            IReadOnlyDictionary<string, object> parameters, object existingValue = null)
+            IDictionary<string, object> parameters, object existingValue = null)
         {
             if (value.ValueKind == SqlValue.Kind.Parameter)
             {
@@ -136,7 +136,7 @@ namespace ParadoxReader.Sql
                 case ParadoxFieldTypes.Time:
                     if (rawValue is TimeSpan ts) return ts;
                     if (rawValue is DateTime timeDt) return timeDt.TimeOfDay;
-                    if (rawValue is string timeStr && TimeSpan.TryParse(timeStr, CultureInfo.InvariantCulture, out var parsedTs))
+                    if (rawValue is string timeStr && TryParseTimeSpanInvariant(timeStr, out var parsedTs))
                         return parsedTs;
                     throw new SqlExecutionException($"Could not convert parameter value '{rawValue}' to a TimeSpan for field type '{field.fType}'.");
 
@@ -217,12 +217,49 @@ namespace ParadoxReader.Sql
             if (value.ValueKind != SqlValue.Kind.String)
                 throw new SqlExecutionException($"Expected a quoted time literal for field type '{fType}'.");
 
-            if (TimeSpan.TryParseExact(value.StringValue, @"hh\:mm\:ss", CultureInfo.InvariantCulture, out var ts))
-                return ts;
-            if (TimeSpan.TryParse(value.StringValue, CultureInfo.InvariantCulture, out ts))
+            if (TryParseTimeSpanInvariant(value.StringValue, out var ts))
                 return ts;
 
             throw new SqlExecutionException($"Could not parse time literal '{value.StringValue}' for field type '{fType}'.");
+        }
+
+        /// <summary>
+        /// .NET 3.5-compatible replacement for the .NET 4.0+
+        /// <c>TimeSpan.TryParse(string, IFormatProvider, out TimeSpan)</c> and
+        /// <c>TimeSpan.TryParseExact(...)</c> overloads, which are not
+        /// available on this target framework. Accepts "hh:mm:ss" (with an
+        /// optional leading '-' and optional fractional seconds) explicitly,
+        /// then falls back to the culture-invariant thread-independent
+        /// <see cref="TimeSpan.Parse(string)"/> by temporarily switching the
+        /// current culture.
+        /// </summary>
+        private static bool TryParseTimeSpanInvariant(string text, out TimeSpan result)
+        {
+            result = TimeSpan.Zero;
+            if (string.IsNullOrEmpty(text)) return false;
+
+            var savedCulture = System.Threading.Thread.CurrentThread.CurrentCulture;
+            try
+            {
+                System.Threading.Thread.CurrentThread.CurrentCulture = CultureInfo.InvariantCulture;
+                try
+                {
+                    result = TimeSpan.Parse(text);
+                    return true;
+                }
+                catch (FormatException)
+                {
+                    return false;
+                }
+                catch (OverflowException)
+                {
+                    return false;
+                }
+            }
+            finally
+            {
+                System.Threading.Thread.CurrentThread.CurrentCulture = savedCulture;
+            }
         }
     }
 

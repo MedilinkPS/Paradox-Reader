@@ -199,7 +199,7 @@ namespace ParadoxReader
         {
             pxFile.autoIncVal = autoIncVal;
             pxFile.stream.Position = ParadoxHeaderOffsets.AutoIncVal;
-            using (var w = new BinaryWriter(pxFile.stream, Encoding.Default, leaveOpen: true))
+            using (var w = new BinaryWriter(new NonClosingStreamWrapper(pxFile.stream), Encoding.Default))
                 w.Write(pxFile.autoIncVal);
         }
 
@@ -212,7 +212,7 @@ namespace ParadoxReader
         public void SyncTableVersion(short changeCount4)
         {
             pxFile.stream.Position = ParadoxHeaderOffsets.ChangeCount4;
-            using (var w = new BinaryWriter(pxFile.stream, Encoding.Default, leaveOpen: true))
+            using (var w = new BinaryWriter(new NonClosingStreamWrapper(pxFile.stream), Encoding.Default))
                 w.Write(changeCount4);
         }
 
@@ -488,7 +488,7 @@ namespace ParadoxReader
                     "The index file appears to be corrupt. Consider using TableRebuilder.Rebuild to rebuild the table and its indexes.");
 
             pxFile.stream.Position = pos;
-            using (var r = new BinaryReader(pxFile.stream, Encoding.Default, leaveOpen: true))
+            using (var r = new BinaryReader(new NonClosingStreamWrapper(pxFile.stream), Encoding.Default))
             {
                 block.LeftChildBlockNumber = r.ReadUInt16();
                 r.ReadUInt16(); // reserved
@@ -513,7 +513,7 @@ namespace ParadoxReader
             int  blockSize = pxFile.maxTableSize * 0x400;
             long pos       = pxFile.headerSize + (long)(block.BlockNumber - 1) * blockSize;
             pxFile.stream.Position = pos;
-            using (var w = new BinaryWriter(pxFile.stream, Encoding.Default, leaveOpen: true))
+            using (var w = new BinaryWriter(new NonClosingStreamWrapper(pxFile.stream), Encoding.Default))
             {
                 ushort usedBytes = block.Entries.Count <= 1
                     ? (ushort)0
@@ -554,7 +554,7 @@ namespace ParadoxReader
             pxFile.lastBlock  = n;
             pxFile.fileBlocks = n;
             pxFile.stream.Position = ParadoxHeaderOffsets.BlockChain;
-            using (var w = new BinaryWriter(pxFile.stream, Encoding.Default, leaveOpen: true))
+            using (var w = new BinaryWriter(new NonClosingStreamWrapper(pxFile.stream), Encoding.Default))
             {
                 w.Write(pxFile.nextBlock);
                 w.Write(pxFile.fileBlocks);
@@ -568,7 +568,7 @@ namespace ParadoxReader
             {
                 pxFile.maxBlocks = n;
                 pxFile.stream.Position = ParadoxHeaderOffsets.MaxBlocks;
-                using (var w = new BinaryWriter(pxFile.stream, Encoding.Default, leaveOpen: true))
+                using (var w = new BinaryWriter(new NonClosingStreamWrapper(pxFile.stream), Encoding.Default))
                     w.Write(pxFile.maxBlocks);
             }
 
@@ -589,7 +589,7 @@ namespace ParadoxReader
         {
             pxFile.pxRootBlockId = newRootId;
             pxFile.stream.Position = ParadoxHeaderOffsets.PxRootBlockId;
-            using (var w = new BinaryWriter(pxFile.stream, Encoding.Default, leaveOpen: true))
+            using (var w = new BinaryWriter(new NonClosingStreamWrapper(pxFile.stream), Encoding.Default))
                 w.Write(newRootId);
         }
 
@@ -602,7 +602,7 @@ namespace ParadoxReader
         {
             pxFile.pxLevelCount = levelCount;
             pxFile.stream.Position = ParadoxHeaderOffsets.PxLevelCount;
-            using (var w = new BinaryWriter(pxFile.stream, Encoding.Default, leaveOpen: true))
+            using (var w = new BinaryWriter(new NonClosingStreamWrapper(pxFile.stream), Encoding.Default))
                 w.Write(pxFile.pxLevelCount);
         }
 
@@ -616,7 +616,7 @@ namespace ParadoxReader
         {
             pxFile.RecordCount = recordCount;
             pxFile.stream.Position = ParadoxHeaderOffsets.RecordCount;
-            using (var w = new BinaryWriter(pxFile.stream, Encoding.Default, leaveOpen: true))
+            using (var w = new BinaryWriter(new NonClosingStreamWrapper(pxFile.stream), Encoding.Default))
                 w.Write(pxFile.RecordCount);
         }
 

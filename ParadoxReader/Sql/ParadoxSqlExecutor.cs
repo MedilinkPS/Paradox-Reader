@@ -60,7 +60,7 @@ namespace ParadoxReader.Sql
         /// placeholders in declaration order. May be null if the statement has
         /// no placeholders.
         /// </param>
-        public IDataReader Execute(string sql, out int rowsAffected, IReadOnlyDictionary<string, object> parameters = null)
+        public IDataReader Execute(string sql, out int rowsAffected, IDictionary<string, object> parameters = null)
         {
             var stmt = new SqlParser(sql).Parse();
             switch (stmt)
@@ -87,14 +87,14 @@ namespace ParadoxReader.Sql
         }
 
         /// <summary>Convenience overload for INSERT/UPDATE/DELETE statements.</summary>
-        public int ExecuteNonQuery(string sql, IReadOnlyDictionary<string, object> parameters = null)
+        public int ExecuteNonQuery(string sql, IDictionary<string, object> parameters = null)
         {
             Execute(sql, out int rowsAffected, parameters);
             return rowsAffected;
         }
 
         /// <summary>Convenience overload for SELECT statements.</summary>
-        public IDataReader ExecuteReader(string sql, IReadOnlyDictionary<string, object> parameters = null) =>
+        public IDataReader ExecuteReader(string sql, IDictionary<string, object> parameters = null) =>
             Execute(sql, out _, parameters);
 
         // ----------------------------------------------------------------
@@ -135,7 +135,7 @@ namespace ParadoxReader.Sql
         // SELECT
         // ----------------------------------------------------------------
 
-        private IDataReader ExecuteSelect(SelectStatement stmt, IReadOnlyDictionary<string, object> parameters)
+        private IDataReader ExecuteSelect(SelectStatement stmt, IDictionary<string, object> parameters)
         {
             var table = ResolveTable(stmt.Table);
 
@@ -154,7 +154,7 @@ namespace ParadoxReader.Sql
         /// full-table scan whenever no eligible index is found.
         /// </summary>
         private IEnumerable<ParadoxRecord> ExecuteWhereRead(ParadoxTableFile table, WhereExpr where,
-            IReadOnlyDictionary<string, object> parameters)
+            IDictionary<string, object> parameters)
         {
             if (where == null)
                 return table.Enumerate();
@@ -182,7 +182,7 @@ namespace ParadoxReader.Sql
         // INSERT
         // ----------------------------------------------------------------
 
-        private int ExecuteInsert(InsertStatement stmt, IReadOnlyDictionary<string, object> parameters)
+        private int ExecuteInsert(InsertStatement stmt, IDictionary<string, object> parameters)
         {
             var table = ResolveTable(stmt.Table);
             var fieldTypes = table.FieldTypes;
@@ -221,7 +221,7 @@ namespace ParadoxReader.Sql
         // UPDATE
         // ----------------------------------------------------------------
 
-        private int ExecuteUpdate(UpdateStatement stmt, IReadOnlyDictionary<string, object> parameters)
+        private int ExecuteUpdate(UpdateStatement stmt, IDictionary<string, object> parameters)
         {
             var table = ResolveTable(stmt.Table);
 
@@ -252,7 +252,7 @@ namespace ParadoxReader.Sql
         // DELETE
         // ----------------------------------------------------------------
 
-        private int ExecuteDelete(DeleteStatement stmt, IReadOnlyDictionary<string, object> parameters)
+        private int ExecuteDelete(DeleteStatement stmt, IDictionary<string, object> parameters)
         {
             var table = ResolveTable(stmt.Table);
 

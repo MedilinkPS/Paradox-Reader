@@ -461,7 +461,7 @@ namespace ParadoxReader
 
         private static void CheckTDataSize<T>(int dataSize)
         {
-            var sizeOfT = System.Runtime.InteropServices.Marshal.SizeOf<T>();
+            var sizeOfT = System.Runtime.InteropServices.Marshal.SizeOf(typeof(T));
             if (dataSize != sizeOfT) { throw new Exception($"Paradox field data size for {typeof(T).Name} should be {sizeOfT} bytes, but was {dataSize} bytes."); };
         }
 

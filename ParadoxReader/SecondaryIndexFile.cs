@@ -146,7 +146,7 @@ namespace ParadoxReader
                 $"entrySize={entrySize}, pointerSize={pointerSize}, blockCapacity={blockCapacity}, " +
                 $"blockBase={blockBase}, indexFieldNumber={indexFile.indexFieldNumber}, " +
                 $"pxLevelCount={indexFile.pxLevelCount}, " +
-                $"fieldIndices=[{string.Join(",", fieldIndices)}]");
+                $"fieldIndices=[{string.Join(",", Array.ConvertAll<int, string>(fieldIndices, i => i.ToString()))}]");
         }
 
         // ----------------------------------------------------------------
@@ -444,7 +444,7 @@ namespace ParadoxReader
         {
             indexFile.autoIncVal = autoIncVal;
             indexFile.stream.Position = ParadoxHeaderOffsets.AutoIncVal;
-            using (var w = new BinaryWriter(indexFile.stream, Encoding.Default, leaveOpen: true))
+            using (var w = new BinaryWriter(new NonClosingStreamWrapper(indexFile.stream), Encoding.Default))
                 w.Write(indexFile.autoIncVal);
         }
 
@@ -457,7 +457,7 @@ namespace ParadoxReader
         public void SyncTableVersion(short changeCount4)
         {
             indexFile.stream.Position = ParadoxHeaderOffsets.ChangeCount4;
-            using (var w = new BinaryWriter(indexFile.stream, Encoding.Default, leaveOpen: true))
+            using (var w = new BinaryWriter(new NonClosingStreamWrapper(indexFile.stream), Encoding.Default))
                 w.Write(changeCount4);
         }
 
@@ -770,7 +770,7 @@ namespace ParadoxReader
                     "The index file appears to be corrupt. Consider using TableRebuilder.Rebuild to rebuild the table and its indexes.");
 
             indexFile.stream.Position = pos;
-            using (var r = new BinaryReader(indexFile.stream, Encoding.Default, leaveOpen: true))
+            using (var r = new BinaryReader(new NonClosingStreamWrapper(indexFile.stream), Encoding.Default))
             {
                 block.LeftChildBlockNumber = r.ReadUInt16();
                 r.ReadUInt16(); // reserved
@@ -806,7 +806,7 @@ namespace ParadoxReader
             int  blockSize = indexFile.maxTableSize * 0x400;
             long pos       = indexFile.headerSize + (long)(block.BlockNumber - blockBase) * blockSize;
             indexFile.stream.Position = pos;
-            using (var w = new BinaryWriter(indexFile.stream, Encoding.Default, leaveOpen: true))
+            using (var w = new BinaryWriter(new NonClosingStreamWrapper(indexFile.stream), Encoding.Default))
             {
                 ushort usedBytes = block.Entries.Count <= 1
                     ? (ushort)0
@@ -855,7 +855,7 @@ namespace ParadoxReader
             indexFile.lastBlock  = n;
             indexFile.fileBlocks = blockCountFromBase;
             indexFile.stream.Position = ParadoxHeaderOffsets.BlockChain;
-            using (var w = new BinaryWriter(indexFile.stream, Encoding.Default, leaveOpen: true))
+            using (var w = new BinaryWriter(new NonClosingStreamWrapper(indexFile.stream), Encoding.Default))
             {
                 w.Write(indexFile.nextBlock);
                 w.Write(indexFile.fileBlocks);
@@ -869,7 +869,7 @@ namespace ParadoxReader
             {
                 indexFile.maxBlocks = blockCountFromBase;
                 indexFile.stream.Position = ParadoxHeaderOffsets.MaxBlocks;
-                using (var w = new BinaryWriter(indexFile.stream, Encoding.Default, leaveOpen: true))
+                using (var w = new BinaryWriter(new NonClosingStreamWrapper(indexFile.stream), Encoding.Default))
                     w.Write(indexFile.maxBlocks);
             }
 
@@ -890,7 +890,7 @@ namespace ParadoxReader
         {
             indexFile.pxRootBlockId = newRootId;
             indexFile.stream.Position = ParadoxHeaderOffsets.PxRootBlockId;
-            using (var w = new BinaryWriter(indexFile.stream, Encoding.Default, leaveOpen: true))
+            using (var w = new BinaryWriter(new NonClosingStreamWrapper(indexFile.stream), Encoding.Default))
                 w.Write(newRootId);
         }
 
@@ -903,7 +903,7 @@ namespace ParadoxReader
         {
             indexFile.pxLevelCount = levelCount;
             indexFile.stream.Position = ParadoxHeaderOffsets.PxLevelCount;
-            using (var w = new BinaryWriter(indexFile.stream, Encoding.Default, leaveOpen: true))
+            using (var w = new BinaryWriter(new NonClosingStreamWrapper(indexFile.stream), Encoding.Default))
                 w.Write(indexFile.pxLevelCount);
         }
 
@@ -917,7 +917,7 @@ namespace ParadoxReader
         {
             indexFile.RecordCount = recordCount;
             indexFile.stream.Position = ParadoxHeaderOffsets.RecordCount;
-            using (var w = new BinaryWriter(indexFile.stream, Encoding.Default, leaveOpen: true))
+            using (var w = new BinaryWriter(new NonClosingStreamWrapper(indexFile.stream), Encoding.Default))
                 w.Write(indexFile.RecordCount);
         }
 

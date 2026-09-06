@@ -88,7 +88,7 @@ namespace ParadoxReader.Sql
         /// '?' placeholders parsed as synthetic "?N" names, by occurrence
         /// order within this collection.
         /// </summary>
-        internal IReadOnlyDictionary<string, object> ToLookup()
+        internal IDictionary<string, object> ToLookup()
         {
             var dict = new Dictionary<string, object>(StringComparer.OrdinalIgnoreCase);
             int positionalIndex = 0;

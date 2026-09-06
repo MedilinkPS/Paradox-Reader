@@ -175,7 +175,7 @@ namespace ParadoxReader
 
                 System.Diagnostics.Debug.WriteLine(
                     $"[SecondaryIndexDiscovery] '{indexFilePath}': mapped {indexedFields.Count} field(s), " +
-                    $"indices=[{string.Join(",", fieldIndices)}]");
+                    $"indices=[{string.Join(",", fieldIndices.ConvertAll(i => i.ToString()).ToArray())}]");
 
                 return new SecondaryIndexInfo
                 {

@@ -173,7 +173,7 @@ namespace ParadoxReader
                     $"streamLength={this.stream.Length}, headerSize={this.headerSize}.");
 
             this.stream.Position = pos;
-            using (var r = new BinaryReader(this.stream, Encoding.Default, leaveOpen: true))
+            using (var r = new BinaryReader(new NonClosingStreamWrapper(this.stream), Encoding.Default))
             {
                 block.LeftChildBlockNumber = r.ReadUInt16();
                 r.ReadUInt16(); // reserved

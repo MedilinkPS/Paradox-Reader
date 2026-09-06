@@ -20,7 +20,7 @@ namespace ParadoxReader
         /// Full paths of every associated file (.DB, .PX, .Xnn/.Xgn/.Ynn/.Ygn, .MB)
         /// that was recreated as part of the rebuild.
         /// </summary>
-        public IReadOnlyList<string> RebuiltFiles { get; internal set; }
+        public List<string> RebuiltFiles { get; internal set; }
     }
 
     /// <summary>
@@ -199,7 +199,7 @@ namespace ParadoxReader
             {
                 TableFilePath   = dbFilePath,
                 RecordsMigrated = migrated,
-                RebuiltFiles    = swapPairs.Select(p => p.Original).ToArray()
+                RebuiltFiles    = swapPairs.Select(p => p.Original).ToList()
             };
         }
 
