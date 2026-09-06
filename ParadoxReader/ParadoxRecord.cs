@@ -101,7 +101,7 @@ namespace ParadoxReader
 
             try
             {
-                using (var idxMgr = new IndexManager(dbPath, file.FieldTypes, pkCount))
+                using (var idxMgr = new IndexManager(dbPath, file.FieldTypes, pkCount, file.autoIncVal))
                 {
                     // Paradox leaf index entries are per-DB-BLOCK, not per-row (see
                     // PrimaryIndexFile/SecondaryIndexFile remarks): index maintenance only

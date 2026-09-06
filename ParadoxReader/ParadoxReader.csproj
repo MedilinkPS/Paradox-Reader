@@ -48,6 +48,7 @@
   <ItemGroup>
     <Compile Include="BinaryReaderWriterPdoxExtensions.cs" />
     <Compile Include="ExtensionMethods.cs" />
+    <Compile Include="IndexOutOfDateException.cs" />
     <Compile Include="MemoValue.cs" />
     <Compile Include="ParadoxBlobFile.cs" />
     <Compile Include="ParadoxCompareOperator.cs" />

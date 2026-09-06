@@ -48,6 +48,12 @@ namespace ParadoxTest
                 return;
             }
 
+            if (args.Length > 0 && args[0] == "indexoutofdatetest")
+            {
+                MiscTests.RunIndexOutOfDateTestMode();
+                return;
+            }
+
             if ((args.Length > 0 && args[0] == "corpustest") || args.Length == 0)
             {
                 // Usage: ParadoxTest.exe [corpustest] [dataRoot] [maxTables] [filter]
@@ -57,8 +63,12 @@ namespace ParadoxTest
                 // appSetting if set), infers each table's schema from its own
                 // header, and exercises append/update/read/lookup operations
                 // against it, comparing against SQLRunner where available.
+                // By default only a small random sample of tables is
+                // processed (maxTables=12) so a full corpus (which can be
+                // hundreds of tables) isn't scanned unintentionally; pass an
+                // explicit maxTables (e.g. 0 for no limit) to override.
                 string dataRoot = args.Length > 1 ? args[1] : null;
-                int maxTables = args.Length > 2 && int.TryParse(args[2], out var mt) ? mt : 400;
+                int maxTables = args.Length > 2 && int.TryParse(args[2], out var mt) ? mt : 12;
                 string filter = args.Length > 3 ? args[3] : null;
                 Trace.Listeners.Add(new ConsoleTraceListener());
                 CorpusTest.Run(dataRoot, maxTables, filter);

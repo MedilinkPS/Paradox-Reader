@@ -68,6 +68,12 @@ namespace ParadoxReader
         /// </summary>
         public int[] FieldIndices => fieldIndices;
 
+        /// <summary>This index's own RecordCount header field (offset 0x06).</summary>
+        public int RecordCount => indexFile.RecordCount;
+
+        /// <summary>This index's own autoIncVal header field (offset 0x49).</summary>
+        public int AutoIncVal => indexFile.autoIncVal;
+
         // ----------------------------------------------------------------
         // Constructor
         // ----------------------------------------------------------------

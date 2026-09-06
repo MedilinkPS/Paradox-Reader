@@ -121,6 +121,8 @@ namespace ParadoxTest
 
         public static void RunRebuildTestMode() => RunRebuildTest();
 
+        public static void RunIndexOutOfDateTestMode() => RunIndexOutOfDateTest();
+
         public static void EnsureCleanState()
         {
             Directory.CreateDirectory(TestFolder);
@@ -323,6 +325,73 @@ namespace ParadoxTest
 
             Console.WriteLine();
             Console.WriteLine(allOk ? "Rebuild test PASSED." : "Rebuild test FAILED.");
+        }
+
+        /// <summary>
+        /// Diagnostic-only: stages testtab_indexoutofdate.DB (whose .PX/.Xnn
+        /// index files still reflect the empty TESTTAB.DB, while the .DB/.MB
+        /// files themselves hold the fully-populated post-append/post-update
+        /// data) and reports what happens when opening it and using its
+        /// indexes.
+        /// </summary>
+        private static void RunIndexOutOfDateTest()
+        {
+            ResetTestFolder();
+
+            string baseName = "testtab_indexoutofdate";
+            foreach (var src in Directory.GetFiles(SourceDataFolder, baseName + ".*"))
+                File.Copy(src, Path.Combine(TestFolder, Path.GetFileName(src)), overwrite: true);
+
+            string dbPath = Path.Combine(TestFolder, baseName + ".DB");
+
+            Console.WriteLine("=== IndexOutOfDate test: opening table ===");
+            try
+            {
+                using (var table = new ParadoxTableFile(dbPath))
+                {
+                    Console.WriteLine("  [ok] Opened table.");
+
+                    Console.WriteLine("=== IndexOutOfDate test: full scan (no index) ===");
+                    int count = 0;
+                    foreach (var rec in table.Enumerate()) count++;
+                    Console.WriteLine("  [ok] Full scan: {0} record(s).", count);
+
+                    Console.WriteLine("=== IndexOutOfDate test: primary index lookup ===");
+                    try
+                    {
+                        var pkHit = table.PrimaryKeyIndex?
+                            .Enumerate(new ParadoxCondition.Compare(ParadoxCompareOperator.Equal, 3, F_ID, F_ID))
+                            .FirstOrDefault();
+                        Console.WriteLine("  [ok] PK lookup for ID=3 -> {0}", pkHit != null ? "found" : "not found");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("  [FAIL] PK lookup threw: {0}: {1}", ex.GetType().Name, ex.Message);
+                    }
+
+                    Console.WriteLine("=== IndexOutOfDate test: append (write path) ===");
+                    try
+                    {
+                        var values = BuildAppendValues(table);
+                        table.AppendRecord(values);
+                        Console.WriteLine("  [ok] Append succeeded.");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.WriteLine("  [FAIL] Append threw: {0}: {1}", ex.GetType().Name, ex.Message);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine("  [FAIL] Opening table threw: {0}: {1}", ex.GetType().Name, ex.Message);
+            }
+        }
+
+        private static object[] BuildAppendValues(ParadoxTableFile table)
+        {
+            var values = new object[table.FieldCount];
+            return values;
         }
 
         private static string FieldValueToComparableString(object value)

@@ -46,12 +46,23 @@ namespace ParadoxReader
         private readonly int         entrySize;
         private readonly int         blockCapacity;
 
+        /// <summary>Full path to this .PX file.</summary>
+        public string FilePath { get; }
+
+        /// <summary>This index's own RecordCount header field (offset 0x06).</summary>
+        public int RecordCount => pxFile.RecordCount;
+
+        /// <summary>This index's own autoIncVal header field (offset 0x49).</summary>
+        public int AutoIncVal => pxFile.autoIncVal;
+
+
         // ----------------------------------------------------------------
         // Constructor
         // ----------------------------------------------------------------
 
         public PrimaryIndexFile(string pxFilePath, ParadoxFile.FieldInfo[] primaryKeyFields)
         {
+            FilePath = pxFilePath;
             this.primaryKeyFields = primaryKeyFields;
 
             foreach (var f in primaryKeyFields)

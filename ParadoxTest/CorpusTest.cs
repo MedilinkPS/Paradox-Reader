@@ -101,7 +101,18 @@ namespace ParadoxTest
             }
 
             if (maxTables > 0 && tableBaseNames.Count > maxTables)
-                tableBaseNames = tableBaseNames.Take(maxTables).ToList();
+            {
+                // Random sample rather than the first N alphabetically, so a
+                // small default run (see Program.cs) still exercises a
+                // representative cross-section of the corpus instead of
+                // always the same alphabetically-first tables.
+                var rng = new Random();
+                tableBaseNames = tableBaseNames
+                    .OrderBy(_ => rng.Next())
+                    .Take(maxTables)
+                    .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+            }
 
             Console.WriteLine("[corpustest] Corpus root: {0}", corpusRoot);
             Console.WriteLine("[corpustest] Tables to process: {0}", tableBaseNames.Count);
@@ -362,7 +373,7 @@ namespace ParadoxTest
                 // --- Rebuild (compact and repair) + re-verify ---
                 try
                 {
-                    string rebuildOutcome = RunRebuildAndVerify(harnessDbPath, schema, baselineCount, pkMin, pkMax, secondaryMinMax);
+                    string rebuildOutcome = RunRebuildAndVerify(harnessDbPath, schema, pkMin, pkMax, secondaryMinMax);
                     Console.WriteLine("  [Test 7: Rebuild + reread] {0}", rebuildOutcome);
                     subResults.Add("rebuild=" + rebuildOutcome);
                     if (rebuildOutcome.StartsWith("FAIL")) anySubFail = true;
@@ -575,9 +586,20 @@ namespace ParadoxTest
         /// original table and the rebuilt table both work.
         /// </summary>
         private static string RunRebuildAndVerify(
-            string dbPath, TableSchemaInfo schema, int expectedCount,
+            string dbPath, TableSchemaInfo schema,
             object[] pkMin, object[] pkMax, Dictionary<int, MinMax> secondaryMinMax)
         {
+            // Capture the current record count immediately before rebuilding
+            // (rather than the original pre-append baseline), since by this
+            // point in the pipeline the harness table has already had a
+            // record appended/updated by earlier test steps.
+            int expectedCount;
+            using (var preTable = new ParadoxTableFile(dbPath))
+            {
+                expectedCount = 0;
+                foreach (var _ in preTable.Enumerate()) expectedCount++;
+            }
+
             var result = TableRebuilder.Rebuild(dbPath);
 
             using (var table = new ParadoxTableFile(dbPath))

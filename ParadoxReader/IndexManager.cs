@@ -30,7 +30,7 @@ namespace ParadoxReader
         // Constructor
         // ----------------------------------------------------------------
 
-        public IndexManager(string dbFilePath, ParadoxFile.FieldInfo[] allFields, int primaryKeyFieldCount)
+        public IndexManager(string dbFilePath, ParadoxFile.FieldInfo[] allFields, int primaryKeyFieldCount, int dbAutoIncVal)
         {
             this.allFields            = allFields;
             this.primaryKeyFieldCount = primaryKeyFieldCount;
@@ -43,11 +43,34 @@ namespace ParadoxReader
                 {
                     var keyFields = GetFieldRange(0, primaryKeyFieldCount);
                     PrimaryIndexFile  = new PrimaryIndexFile(pxPath, keyFields);
+                    CheckIndexOutOfDate(PrimaryIndexFile.FilePath, PrimaryIndexFile.AutoIncVal, dbAutoIncVal);
                 }
             }
 
             // Secondary indexes (.Xnn, .Xgn)
-            DiscoverAndOpenSecondaryIndexes(dbFilePath);
+            DiscoverAndOpenSecondaryIndexes(dbFilePath, dbAutoIncVal);
+        }
+
+        /// <summary>
+        /// Compares an index file's own autoIncVal header field (offset
+        /// 0x49) against the parent .DB's autoIncVal. BDE/Pdxrbld considers
+        /// an index out of date if this doesn't match after an AutoInc
+        /// field is assigned (see PrimaryIndexFile.SyncAutoIncVal); a
+        /// nonzero mismatch means the index predates (or postdates) the
+        /// current data and must be treated as stale, mirroring BDE's
+        /// "Index is out of date" error rather than silently returning
+        /// wrong/empty lookup results or corrupting the index further on
+        /// write.
+        /// </summary>
+        private static void CheckIndexOutOfDate(string indexFilePath, int indexAutoIncVal, int dbAutoIncVal)
+        {
+            if (dbAutoIncVal != 0 && indexAutoIncVal != dbAutoIncVal)
+            {
+                throw new IndexOutOfDateException(indexFilePath,
+                    $"Index is out of date: '{indexFilePath}' autoIncVal={indexAutoIncVal} " +
+                    $"does not match table autoIncVal={dbAutoIncVal}. Consider TableRebuilder.Rebuild " +
+                    "to regenerate the index.");
+            }
         }
 
         // ----------------------------------------------------------------
@@ -141,15 +164,20 @@ namespace ParadoxReader
         // Secondary index discovery
         // ----------------------------------------------------------------
 
-        private void DiscoverAndOpenSecondaryIndexes(string dbFilePath)
+        private void DiscoverAndOpenSecondaryIndexes(string dbFilePath, int dbAutoIncVal)
         {
             var discovered = SecondaryIndexDiscovery.Discover(dbFilePath, allFields, primaryKeyFieldCount);
             foreach (var info in discovered)
             {
                 try
                 {
-                    secondaryIndexes.Add(
-                        new SecondaryIndexFile(info.FilePath, info.IndexedFields, info.FieldIndices));
+                    var secondaryIndex = new SecondaryIndexFile(info.FilePath, info.IndexedFields, info.FieldIndices);
+                    CheckIndexOutOfDate(secondaryIndex.FilePath, secondaryIndex.AutoIncVal, dbAutoIncVal);
+                    secondaryIndexes.Add(secondaryIndex);
+                }
+                catch (IndexOutOfDateException)
+                {
+                    throw;
                 }
                 catch (Exception ex)
                 {

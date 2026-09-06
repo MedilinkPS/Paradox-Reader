@@ -79,7 +79,8 @@ namespace ParadoxReader
             indexManager = new IndexManager(
                 filePath,
                 FieldTypes,
-                primaryKeyFields);
+                primaryKeyFields,
+                autoIncVal);
 
             fileLock = new ParadoxFileLock(filePath);
 
