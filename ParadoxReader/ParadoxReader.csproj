@@ -82,6 +82,18 @@
     <Compile Include="SecondaryIndexDiscovery.cs" />
     <Compile Include="SecondaryIndexHandle.cs" />
     <Compile Include="SecondaryIndexInfo.cs" />
+    <Compile Include="Sql\ParadoxCommand.cs" />
+    <Compile Include="Sql\ParadoxConnection.cs" />
+    <Compile Include="Sql\ParadoxParameter.cs" />
+    <Compile Include="Sql\ParadoxParameterCollection.cs" />
+    <Compile Include="Sql\ParadoxSqlExecutor.cs" />
+    <Compile Include="Sql\SqlAst.cs" />
+    <Compile Include="Sql\SqlDataReader.cs" />
+    <Compile Include="Sql\SqlParser.cs" />
+    <Compile Include="Sql\SqlToken.cs" />
+    <Compile Include="Sql\SqlTokenizer.cs" />
+    <Compile Include="Sql\SqlValueCoercion.cs" />
+    <Compile Include="Sql\WhereTranslator.cs" />
     <Compile Include="TableRebuilder.cs" />
   </ItemGroup>
   <ItemGroup>

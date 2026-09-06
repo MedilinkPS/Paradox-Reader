@@ -54,6 +54,12 @@ namespace ParadoxTest
                 return;
             }
 
+            if (args.Length > 0 && args[0] == "sqlenginetest")
+            {
+                SqlEngineTest.Run();
+                return;
+            }
+
             if ((args.Length > 0 && args[0] == "corpustest") || args.Length == 0)
             {
                 // Usage: ParadoxTest.exe [corpustest] [dataRoot] [maxTables] [filter]
