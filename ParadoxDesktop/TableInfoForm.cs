@@ -45,8 +45,50 @@ namespace ParadoxDesktop
             }
             else
             {
+                // .Xnn/.Xgn and their .Ynn/.Ygn "maintained field" companions
+                // describe the same logical index (same indexed fields), so
+                // group them together under one entry keyed by the index's
+                // name - which for a Paradox secondary index is simply the
+                // name of the (first) field it's built on - rather than
+                // listing each file separately.
+                var indexNames = new System.Collections.Generic.List<string>();
+                var fieldsByIndexName = new System.Collections.Generic.Dictionary<string, string>();
+                var extensionsByIndexName = new System.Collections.Generic.Dictionary<string, System.Collections.Generic.List<string>>();
+
                 foreach (var index in table.SecondaryIndexes)
-                    indexesListBox.Items.Add(Path.GetFileName(index.FilePath));
+                {
+                    string extension = Path.GetExtension(index.FilePath);
+                    var fieldNames = new string[index.FieldIndices.Length];
+                    for (int i = 0; i < index.FieldIndices.Length; i++)
+                    {
+                        int fieldIndex = index.FieldIndices[i];
+                        fieldNames[i] = fieldIndex >= 0 && fieldIndex < table.FieldNames.Length
+                            ? table.FieldNames[fieldIndex]
+                            : "?";
+                    }
+
+                    // Paradox names a secondary index after the first field
+                    // it indexes (see the "Secondary Index Info" dialog in
+                    // the original Paradox for Windows tool).
+                    string indexName = fieldNames.Length > 0 ? fieldNames[0] : "?";
+
+                    System.Collections.Generic.List<string> extensions;
+                    if (!extensionsByIndexName.TryGetValue(indexName, out extensions))
+                    {
+                        extensions = new System.Collections.Generic.List<string>();
+                        extensionsByIndexName[indexName] = extensions;
+                        fieldsByIndexName[indexName] = string.Join(", ", fieldNames);
+                        indexNames.Add(indexName);
+                    }
+
+                    extensions.Add(extension);
+                }
+
+                foreach (var indexName in indexNames)
+                {
+                    indexesListBox.Items.Add(string.Format("{0}  \u2014  fields: {1}; extensions: {2}",
+                        indexName, fieldsByIndexName[indexName], string.Join(", ", extensionsByIndexName[indexName].ToArray())));
+                }
             }
         }
     }
