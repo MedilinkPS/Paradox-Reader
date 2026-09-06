@@ -655,7 +655,7 @@ namespace ParadoxTest
                 "'" + Esc((string)v[F_VARCHARVAL]) + "', " +
                 "'" + dateVal.ToString("MM/dd/yyyy") + "', " +
                 ((bool)v[F_BOOLVAL] ? "TRUE" : "FALSE") + ", " +
-                "'" + timeVal.ToString(@"hh\:mm\:ss") + "', " +
+                "'" + timeVal.Hours.ToString("00") + ":" + timeVal.Minutes.ToString("00") + ":" + timeVal.Seconds.ToString("00") + "', " +
                 "'" + timestampVal.ToString("MM/dd/yyyy HH:mm:ss") + "', " +
                 Convert.ToDecimal(v[F_MONEYVAL]).ToString(System.Globalization.CultureInfo.InvariantCulture) +
                 ")";
@@ -778,13 +778,13 @@ namespace ParadoxTest
                     anyDiff = true;
                     var first = diffOffsets.Take(10).Select(o => $"0x{o:X} (sr={srBytes[o]:X2} h={hBytes[o]:X2})");
                     Console.WriteLine("[{0}] DIFF: {1} byte(s) differ ({2} after filtering known-volatile pointer bytes). First offsets: {3}{4}",
-                        name, diffOffsets.Count, meaningfulOffsets.Count, string.Join(", ", first), diffOffsets.Count > 10 ? ", ..." : "");
+                        name, diffOffsets.Count, meaningfulOffsets.Count, string.Join(", ", first.ToArray()), diffOffsets.Count > 10 ? ", ..." : "");
 
                     if (meaningfulOffsets.Count > 0 && meaningfulOffsets.Count != diffOffsets.Count)
                     {
                         var firstMeaningful = meaningfulOffsets.Take(10).Select(o => $"0x{o:X} (sr={srBytes[o]:X2} h={hBytes[o]:X2})");
                         Console.WriteLine("    meaningful (non-pointer) offsets: {0}{1}",
-                            string.Join(", ", firstMeaningful), meaningfulOffsets.Count > 10 ? ", ..." : "");
+                            string.Join(", ", firstMeaningful.ToArray()), meaningfulOffsets.Count > 10 ? ", ..." : "");
                     }
 
                     if (name.EndsWith(".DB", StringComparison.OrdinalIgnoreCase))
@@ -1312,7 +1312,7 @@ namespace ParadoxTest
                 foreach (var rec in table.Enumerate())
                 {
                     rowNum++;
-                    var values = string.Join(", ", rec.DataValues.Select(v => v?.ToString() ?? "<null>"));
+                    var values = string.Join(", ", rec.DataValues.Select(v => v?.ToString() ?? "<null>").ToArray());
                     Console.WriteLine($"  Row {rowNum}: {values}");
                 }
                 Console.WriteLine(rowNum > 0 ? $"Decrypted and enumerated {rowNum} row(s) successfully." : "No rows enumerated - decryption may have failed.");
@@ -1326,7 +1326,7 @@ namespace ParadoxTest
                 Console.WriteLine($"{Path.GetFileName(dbPath)}: EncryptionKey = 0x{table.EncryptionKey:X8}");
 
                 var rec = table.Enumerate().First();
-                Console.WriteLine("Before update: " + string.Join(", ", rec.DataValues.Select(v => v?.ToString() ?? "<null>")));
+                Console.WriteLine("Before update: " + string.Join(", ", rec.DataValues.Select(v => v?.ToString() ?? "<null>").ToArray()));
 
                 var newValues = (object[])rec.DataValues.Clone();
                 newValues[F_INTVAL] = 555555;
@@ -1336,7 +1336,7 @@ namespace ParadoxTest
             using (var table = new ParadoxTableFile(dbPath))
             {
                 var rec = table.Enumerate().First();
-                Console.WriteLine("After update (reopened): " + string.Join(", ", rec.DataValues.Select(v => v?.ToString() ?? "<null>")));
+                Console.WriteLine("After update (reopened): " + string.Join(", ", rec.DataValues.Select(v => v?.ToString() ?? "<null>").ToArray()));
                 bool ok = Convert.ToInt32(rec.DataValues[F_INTVAL]) == 555555;
                 Console.WriteLine(ok ? "WRITE PATH OK: encrypted round-trip verified." : "WRITE PATH FAILED.");
 
@@ -1681,7 +1681,7 @@ namespace ParadoxTest
             if (remainingLocks.Length > 0)
             {
                 Console.WriteLine("  [warn] {0} lock file(s) still present before launch: {1}",
-                    remainingLocks.Length, string.Join(", ", remainingLocks.Select(Path.GetFileName)));
+                    remainingLocks.Length, string.Join(", ", remainingLocks.Select(Path.GetFileName).ToArray()));
             }
 
             var psi = new ProcessStartInfo
@@ -1735,9 +1735,9 @@ namespace ParadoxTest
                 string stdout = stdoutBuilder.ToString();
                 string stderr = stderrBuilder.ToString();
 
-                if (!string.IsNullOrWhiteSpace(stdout))
+                if (!Net35Compat.IsNullOrWhiteSpace(stdout))
                     Console.WriteLine(stdout.Trim());
-                if (!string.IsNullOrWhiteSpace(stderr))
+                if (!Net35Compat.IsNullOrWhiteSpace(stderr))
                     Console.WriteLine("  [stderr] " + stderr.Trim());
             }
 
@@ -1817,7 +1817,7 @@ namespace ParadoxTest
             if (stray.Length == 0) return;
 
             Console.WriteLine("  [warn] {0} stray SQLRunner process(es) found before launch (PIDs: {1}); killing.",
-                stray.Length, string.Join(", ", stray.Select(p => p.Id)));
+                stray.Length, string.Join(", ", stray.Select(p => p.Id.ToString()).ToArray()));
 
             foreach (var p in stray)
             {
@@ -1834,7 +1834,7 @@ namespace ParadoxTest
             if (stillRunning.Length > 0)
             {
                 Console.WriteLine("  [warn] {0} SQLRunner process(es) still running after kill attempt (PIDs: {1}).",
-                    stillRunning.Length, string.Join(", ", stillRunning.Select(p => p.Id)));
+                    stillRunning.Length, string.Join(", ", stillRunning.Select(p => p.Id.ToString()).ToArray()));
                 foreach (var p in stillRunning) p.Dispose();
             }
         }

@@ -58,20 +58,20 @@ namespace ParadoxTest
         /// <param name="filter">Optional substring filter on table base name (case-insensitive).</param>
         public static void Run(string corpusRoot, int maxTables, string filter)
         {
-            if (string.IsNullOrWhiteSpace(corpusRoot))
+            if (Net35Compat.IsNullOrWhiteSpace(corpusRoot))
                 corpusRoot = Configuration.GetCorpusDataRootPath();
 
             // Final fallback: the bundled fixture data folder copied to the
             // output directory (bin\Debug\data) alongside the exe, so this
             // mode always has *something* to run against out of the box,
             // without requiring any machine-specific configuration.
-            if (string.IsNullOrWhiteSpace(corpusRoot))
+            if (Net35Compat.IsNullOrWhiteSpace(corpusRoot))
             {
                 corpusRoot = Path.Combine(
                     Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location), "data");
             }
 
-            if (string.IsNullOrWhiteSpace(corpusRoot) || !Directory.Exists(corpusRoot))
+            if (Net35Compat.IsNullOrWhiteSpace(corpusRoot) || !Directory.Exists(corpusRoot))
             {
                 Console.WriteLine("[corpustest] Corpus root not found: {0}", corpusRoot);
                 Console.WriteLine("[corpustest] Pass a corpusRoot argument, or set the \"CorpusDataRootPath\" " +
@@ -93,7 +93,7 @@ namespace ParadoxTest
                 .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
-            if (!string.IsNullOrWhiteSpace(filter))
+            if (!Net35Compat.IsNullOrWhiteSpace(filter))
             {
                 tableBaseNames = tableBaseNames
                     .Where(n => n.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0)
@@ -167,8 +167,8 @@ namespace ParadoxTest
 
         private static TableOutcome ProcessTable(string corpusRoot, string baseName, bool haveSqlRunner, out string detail)
         {
-            string harnessDir   = Path.Combine(WorkRoot, SanitizeForPath(baseName), "harness");
-            string sqlrunnerDir = Path.Combine(WorkRoot, SanitizeForPath(baseName), "sqlrunner");
+            string harnessDir   = Path.Combine(Path.Combine(WorkRoot, SanitizeForPath(baseName)), "harness");
+            string sqlrunnerDir = Path.Combine(Path.Combine(WorkRoot, SanitizeForPath(baseName)), "sqlrunner");
 
             try
             {
@@ -385,7 +385,7 @@ namespace ParadoxTest
                     anySubFail = true;
                 }
 
-                detail = string.Join(", ", subResults);
+                detail = string.Join(", ", subResults.ToArray());
                 return anySubFail ? TableOutcome.Fail : TableOutcome.Pass;
             }
             finally
@@ -694,7 +694,7 @@ namespace ParadoxTest
             if (columns.Count == 0)
                 return "SKIP:no-insertable-columns";
 
-            string insertSql = "INSERT INTO '" + tablePath + "' (" + string.Join(", ", columns) + ") VALUES (" + string.Join(", ", literals) + ")";
+            string insertSql = "INSERT INTO '" + tablePath + "' (" + string.Join(", ", columns.ToArray()) + ") VALUES (" + string.Join(", ", literals.ToArray()) + ")";
 
             RunSqlRunner(workDir, insertSql);
 
