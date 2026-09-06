@@ -31,6 +31,9 @@
             this.components = new System.ComponentModel.Container();
             this.menuStrip = new System.Windows.Forms.MenuStrip();
             this.fileMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.newMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.newSqlFileMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.fileMenuSeparator2 = new System.Windows.Forms.ToolStripSeparator();
             this.openMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.saveAsMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.exportMenuItem = new System.Windows.Forms.ToolStripMenuItem();
@@ -39,9 +42,14 @@
             this.editMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.editModeMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.modifyMemoMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.recordMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.insertRecordMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.deleteRecordMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.tableMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.infoStructureMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.tableRebuildMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.smsMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.runSmsMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.helpMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.helpMenuItemHelp = new System.Windows.Forms.ToolStripMenuItem();
             this.openFileDialog = new System.Windows.Forms.OpenFileDialog();
@@ -53,7 +61,9 @@
             this.menuStrip.Items.AddRange(new System.Windows.Forms.ToolStripItem[] {
             this.fileMenuItem,
             this.editMenuItem,
+            this.recordMenuItem,
             this.tableMenuItem,
+            this.smsMenuItem,
             this.helpMenuItem});
             this.menuStrip.Location = new System.Drawing.Point(0, 0);
             this.menuStrip.Name = "menuStrip";
@@ -64,6 +74,8 @@
             // fileMenuItem
             //
             this.fileMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this.newMenuItem,
+            this.fileMenuSeparator2,
             this.openMenuItem,
             this.saveAsMenuItem,
             this.exportMenuItem,
@@ -72,6 +84,26 @@
             this.fileMenuItem.Name = "fileMenuItem";
             this.fileMenuItem.Size = new System.Drawing.Size(37, 20);
             this.fileMenuItem.Text = "&File";
+            //
+            // newMenuItem
+            //
+            this.newMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this.newSqlFileMenuItem});
+            this.newMenuItem.Name = "newMenuItem";
+            this.newMenuItem.Size = new System.Drawing.Size(180, 22);
+            this.newMenuItem.Text = "&New";
+            //
+            // newSqlFileMenuItem
+            //
+            this.newSqlFileMenuItem.Name = "newSqlFileMenuItem";
+            this.newSqlFileMenuItem.Size = new System.Drawing.Size(180, 22);
+            this.newSqlFileMenuItem.Text = "&SQL File";
+            this.newSqlFileMenuItem.Click += new System.EventHandler(this.newSqlFileMenuItem_Click);
+            //
+            // fileMenuSeparator2
+            //
+            this.fileMenuSeparator2.Name = "fileMenuSeparator2";
+            this.fileMenuSeparator2.Size = new System.Drawing.Size(177, 6);
             //
             // openMenuItem
             //
@@ -131,6 +163,31 @@
             this.modifyMemoMenuItem.Text = "Modify &Memo/Blob";
             this.modifyMemoMenuItem.Click += new System.EventHandler(this.modifyMemoMenuItem_Click);
             //
+            // recordMenuItem
+            //
+            this.recordMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this.insertRecordMenuItem,
+            this.deleteRecordMenuItem});
+            this.recordMenuItem.Name = "recordMenuItem";
+            this.recordMenuItem.Size = new System.Drawing.Size(58, 20);
+            this.recordMenuItem.Text = "&Record";
+            //
+            // insertRecordMenuItem
+            //
+            this.insertRecordMenuItem.Name = "insertRecordMenuItem";
+            this.insertRecordMenuItem.ShortcutKeys = System.Windows.Forms.Keys.Insert;
+            this.insertRecordMenuItem.Size = new System.Drawing.Size(220, 22);
+            this.insertRecordMenuItem.Text = "&Insert";
+            this.insertRecordMenuItem.Click += new System.EventHandler(this.insertRecordMenuItem_Click);
+            //
+            // deleteRecordMenuItem
+            //
+            this.deleteRecordMenuItem.Name = "deleteRecordMenuItem";
+            this.deleteRecordMenuItem.ShortcutKeys = ((System.Windows.Forms.Keys)((System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.Delete)));
+            this.deleteRecordMenuItem.Size = new System.Drawing.Size(220, 22);
+            this.deleteRecordMenuItem.Text = "&Delete";
+            this.deleteRecordMenuItem.Click += new System.EventHandler(this.deleteRecordMenuItem_Click);
+            //
             // tableMenuItem
             //
             this.tableMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] {
@@ -153,6 +210,22 @@
             this.tableRebuildMenuItem.Size = new System.Drawing.Size(180, 22);
             this.tableRebuildMenuItem.Text = "Table &Rebuild";
             this.tableRebuildMenuItem.Click += new System.EventHandler(this.tableRebuildMenuItem_Click);
+            //
+            // smsMenuItem
+            //
+            this.smsMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this.runSmsMenuItem});
+            this.smsMenuItem.Name = "smsMenuItem";
+            this.smsMenuItem.Size = new System.Drawing.Size(42, 20);
+            this.smsMenuItem.Text = "&SMS";
+            //
+            // runSmsMenuItem
+            //
+            this.runSmsMenuItem.Name = "runSmsMenuItem";
+            this.runSmsMenuItem.ShortcutKeys = System.Windows.Forms.Keys.F8;
+            this.runSmsMenuItem.Size = new System.Drawing.Size(180, 22);
+            this.runSmsMenuItem.Text = "&Run SMS";
+            this.runSmsMenuItem.Click += new System.EventHandler(this.runSmsMenuItem_Click);
             //
             // helpMenuItem
             //
@@ -185,6 +258,7 @@
             this.Controls.Add(this.menuStrip);
             this.Name = "ParadoxDesktopMainForm";
             this.Text = "Paradox Desktop";
+            this.MdiChildActivate += new System.EventHandler(this.ParadoxDesktopMainForm_MdiChildActivate);
             this.menuStrip.ResumeLayout(false);
             this.menuStrip.PerformLayout();
             this.ResumeLayout(false);
@@ -196,6 +270,9 @@
 
         private System.Windows.Forms.MenuStrip menuStrip;
         private System.Windows.Forms.ToolStripMenuItem fileMenuItem;
+        private System.Windows.Forms.ToolStripMenuItem newMenuItem;
+        private System.Windows.Forms.ToolStripMenuItem newSqlFileMenuItem;
+        private System.Windows.Forms.ToolStripSeparator fileMenuSeparator2;
         private System.Windows.Forms.ToolStripMenuItem openMenuItem;
         private System.Windows.Forms.ToolStripMenuItem saveAsMenuItem;
         private System.Windows.Forms.ToolStripMenuItem exportMenuItem;
@@ -204,9 +281,14 @@
         private System.Windows.Forms.ToolStripMenuItem editMenuItem;
         private System.Windows.Forms.ToolStripMenuItem editModeMenuItem;
         private System.Windows.Forms.ToolStripMenuItem modifyMemoMenuItem;
+        private System.Windows.Forms.ToolStripMenuItem recordMenuItem;
+        private System.Windows.Forms.ToolStripMenuItem insertRecordMenuItem;
+        private System.Windows.Forms.ToolStripMenuItem deleteRecordMenuItem;
         private System.Windows.Forms.ToolStripMenuItem tableMenuItem;
         private System.Windows.Forms.ToolStripMenuItem infoStructureMenuItem;
         private System.Windows.Forms.ToolStripMenuItem tableRebuildMenuItem;
+        private System.Windows.Forms.ToolStripMenuItem smsMenuItem;
+        private System.Windows.Forms.ToolStripMenuItem runSmsMenuItem;
         private System.Windows.Forms.ToolStripMenuItem helpMenuItem;
         private System.Windows.Forms.ToolStripMenuItem helpMenuItemHelp;
         private System.Windows.Forms.OpenFileDialog openFileDialog;

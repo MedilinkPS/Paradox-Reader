@@ -20,9 +20,11 @@ namespace ParadoxTest
     ///
     /// The data directory to scan is resolved, in order: the "corpusRoot"
     /// argument; the "CorpusDataRootPath" appSetting (see
-    /// SqlRunner.local.config.example); the bundled bin\Debug\data fixture
-    /// folder (always present, so this mode works out of the box even with
-    /// no machine-specific configuration).
+    /// SqlRunner.local.config.example); the bundled .\data fixture folder
+    /// relative to the current working directory (bin\Debug\data when run
+    /// from Visual Studio/Test Explorer or the built exe's own folder;
+    /// always present, so this mode works out of the box even with no
+    /// machine-specific configuration).
     ///
     /// Some tables (e.g. real-world corpus data) may be password-protected;
     /// ParadoxReader does not currently implement Paradox's encryption, so
@@ -62,13 +64,15 @@ namespace ParadoxTest
                 corpusRoot = Configuration.GetCorpusDataRootPath();
 
             // Final fallback: the bundled fixture data folder copied to the
-            // output directory (bin\Debug\data) alongside the exe, so this
-            // mode always has *something* to run against out of the box,
-            // without requiring any machine-specific configuration.
+            // output directory (bin\Debug\data), resolved relative to the
+            // current working directory rather than the entry assembly
+            // (which, when running under a test host such as Visual Studio's
+            // Test Explorer, is the test host's own path rather than
+            // ParadoxTest's bin\Debug folder). This keeps ".\data" working
+            // for both `ParadoxTest.exe` and unit-test-driven runs.
             if (Net35Compat.IsNullOrWhiteSpace(corpusRoot))
             {
-                corpusRoot = Path.Combine(
-                    Path.GetDirectoryName(System.Reflection.Assembly.GetEntryAssembly().Location), "data");
+                corpusRoot = Path.Combine(Directory.GetCurrentDirectory(), "data");
             }
 
             if (Net35Compat.IsNullOrWhiteSpace(corpusRoot) || !Directory.Exists(corpusRoot))

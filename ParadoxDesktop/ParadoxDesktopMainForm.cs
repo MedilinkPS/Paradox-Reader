@@ -25,9 +25,36 @@ namespace ParadoxDesktop
 
         private TableEditorForm ActiveTableEditor => ActiveMdiChild as TableEditorForm;
 
+        private SqlEditorForm ActiveSqlEditor => ActiveMdiChild as SqlEditorForm;
+
+        // ----------------------------------------------------------------
+        // MDI child activation: keep Table/Record/SMS menus in sync with
+        // whichever kind of child window is currently active.
+        // ----------------------------------------------------------------
+
+        private void ParadoxDesktopMainForm_MdiChildActivate(object sender, EventArgs e)
+        {
+            bool tableActive = ActiveTableEditor != null;
+            bool sqlActive = ActiveSqlEditor != null;
+
+            tableMenuItem.Enabled = tableActive;
+            recordMenuItem.Enabled = tableActive;
+            smsMenuItem.Enabled = sqlActive;
+        }
+
         // ----------------------------------------------------------------
         // File menu
         // ----------------------------------------------------------------
+
+        private void newSqlFileMenuItem_Click(object sender, EventArgs e)
+        {
+            var editor = new SqlEditorForm
+            {
+                MdiParent = this
+            };
+            editor.Show();
+        }
+
 
         private void openMenuItem_Click(object sender, EventArgs e)
         {
@@ -116,6 +143,36 @@ namespace ParadoxDesktop
         }
 
         // ----------------------------------------------------------------
+        // Record menu
+        // ----------------------------------------------------------------
+
+        private void insertRecordMenuItem_Click(object sender, EventArgs e)
+        {
+            var editor = ActiveTableEditor;
+            if (editor == null)
+            {
+                MessageBox.Show(this, "No table is currently open.", "Insert Record",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            editor.InsertRecord();
+        }
+
+        private void deleteRecordMenuItem_Click(object sender, EventArgs e)
+        {
+            var editor = ActiveTableEditor;
+            if (editor == null)
+            {
+                MessageBox.Show(this, "No table is currently open.", "Delete Record",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            editor.DeleteCurrentRecord();
+        }
+
+        // ----------------------------------------------------------------
         // Table menu
         // ----------------------------------------------------------------
 
@@ -143,6 +200,41 @@ namespace ParadoxDesktop
             }
 
             editor.RebuildTable();
+        }
+
+        // ----------------------------------------------------------------
+        // SMS menu
+        // ----------------------------------------------------------------
+
+        private void runSmsMenuItem_Click(object sender, EventArgs e)
+        {
+            var editor = ActiveSqlEditor;
+            if (editor == null)
+            {
+                MessageBox.Show(this, "No SQL file is currently open.", "Run SMS",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            editor.RunSql(ResolveSqlBaseDirectory());
+        }
+
+        /// <summary>
+        /// Resolves the base directory used to look up bare table names
+        /// referenced in a SQL script: the directory of the first open
+        /// <see cref="TableEditorForm"/>, if any, else the current working
+        /// directory.
+        /// </summary>
+        private string ResolveSqlBaseDirectory()
+        {
+            foreach (Form child in MdiChildren)
+            {
+                var tableEditor = child as TableEditorForm;
+                if (tableEditor?.TableFilePath != null)
+                    return Path.GetDirectoryName(tableEditor.TableFilePath);
+            }
+
+            return Directory.GetCurrentDirectory();
         }
 
         // ----------------------------------------------------------------

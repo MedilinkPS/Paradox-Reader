@@ -64,9 +64,11 @@ namespace ParadoxTest
             {
                 // Usage: ParadoxTest.exe [corpustest] [dataRoot] [maxTables] [filter]
                 // Schema-agnostic test mode: walks every table found in
-                // dataRoot (default: bin\Debug\data, i.e. the folder we're
-                // executing from, falling back to the CorpusDataRootPath
-                // appSetting if set), infers each table's schema from its own
+                // dataRoot (default: .\data relative to the current working
+                // directory, i.e. bin\Debug\data when run from Visual
+                // Studio/Test Explorer or the exe's own folder, falling back
+                // to the CorpusDataRootPath appSetting if set), infers each
+                // table's schema from its own
                 // header, and exercises append/update/read/lookup operations
                 // against it, comparing against SQLRunner where available.
                 // By default only a small random sample of tables is

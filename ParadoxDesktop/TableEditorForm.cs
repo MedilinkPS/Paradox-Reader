@@ -222,6 +222,16 @@ namespace ParadoxDesktop
                 ModifyCurrentMemoOrBlob();
                 e.Handled = true;
             }
+            else if (e.KeyCode == Keys.Insert && e.Modifiers == Keys.None)
+            {
+                InsertRecord();
+                e.Handled = true;
+            }
+            else if (e.KeyCode == Keys.Delete && e.Modifiers == Keys.Control)
+            {
+                DeleteCurrentRecord();
+                e.Handled = true;
+            }
         }
 
         private void dataGridView_CellDoubleClick(object sender, DataGridViewCellEventArgs e)
@@ -285,6 +295,125 @@ namespace ParadoxDesktop
                     MessageBox.Show(this, "Failed to save change:\r\n" + ex.Message, "Modify Memo/Blob",
                         MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
+            }
+        }
+
+        // ----------------------------------------------------------------
+        // Insert record (Ins)
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Appends a new blank record to the table (via <see cref="ParadoxTableFile.AppendRecord"/>)
+        /// and adds a corresponding blank row to the grid, ready for editing.
+        /// </summary>
+        public void InsertRecord()
+        {
+            if (table == null) return;
+
+            if (!editModeEnabled)
+            {
+                MessageBox.Show(this, "Enable Edit Mode (F9) before inserting a record.", "Insert Record",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            try
+            {
+                var blankValues = new object[table.FieldTypes.Length];
+                for (int i = 0; i < blankValues.Length; i++)
+                {
+                    if (table.FieldTypes[i].fType == ParadoxFieldTypes.MemoBLOb ||
+                        table.FieldTypes[i].fType == ParadoxFieldTypes.FmtMemoBLOb)
+                        blankValues[i] = new MemoValue(string.Empty, null);
+                }
+
+                var record = table.AppendRecord(blankValues);
+
+                suppressCellChangeHandling = true;
+                try
+                {
+                    var row = dataTable.NewRow();
+                    for (int i = 0; i < record.DataValues.Length && i < dataTable.Columns.Count; i++)
+                        row[i] = ToGridValue(record.DataValues[i]);
+                    dataTable.Rows.Add(row);
+                    rowRecords.Add(record);
+                }
+                finally
+                {
+                    suppressCellChangeHandling = false;
+                }
+
+                int newRowIndex = dataTable.Rows.Count - 1;
+                dataGridView.ClearSelection();
+                dataGridView.CurrentCell = dataGridView.Rows[newRowIndex].Cells[0];
+
+                statusLabel.Text = string.Format("{0} record(s). Record inserted.", table.RecordCount);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Failed to insert record:\r\n" + ex.Message, "Insert Record",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        // ----------------------------------------------------------------
+        // Delete record (Ctrl+Del)
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Deletes the record backing the currently selected grid row (via
+        /// <see cref="ParadoxTableFile.DeleteRecord"/>) after confirmation, and
+        /// removes the corresponding row from the grid. Note: this only removes
+        /// the .DB record; any memo/blob content it referenced in the .MB file
+        /// is left orphaned (unreferenced) until the table is rebuilt via
+        /// Table &gt; Table Rebuild, which reclaims the space.
+        /// </summary>
+        public void DeleteCurrentRecord()
+        {
+            if (table == null || dataGridView.CurrentCell == null) return;
+
+            if (!editModeEnabled)
+            {
+                MessageBox.Show(this, "Enable Edit Mode (F9) before deleting a record.", "Delete Record",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            int rowIndex = dataGridView.CurrentCell.RowIndex;
+            if (rowIndex < 0 || rowIndex >= rowRecords.Count) return;
+
+            var confirm = MessageBox.Show(this, "Delete the selected record? This cannot be undone.",
+                "Delete Record", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+            if (confirm != DialogResult.Yes) return;
+
+            try
+            {
+                var record = rowRecords[rowIndex];
+                table.DeleteRecord(record);
+
+                suppressCellChangeHandling = true;
+                try
+                {
+                    dataTable.Rows.RemoveAt(rowIndex);
+                    rowRecords.RemoveAt(rowIndex);
+
+                    // Every row after the deleted one shifted down one slot within its
+                    // block (see ParadoxTableFile.DeleteRecord), so the cached
+                    // block/record positions for subsequent rows in the same block are
+                    // now stale. Re-enumerating is the simplest way to stay consistent.
+                }
+                finally
+                {
+                    suppressCellChangeHandling = false;
+                }
+
+                RebuildGridFromTable();
+                statusLabel.Text = string.Format("{0} record(s). Record deleted.", table.RecordCount);
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Failed to delete record:\r\n" + ex.Message, "Delete Record",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
