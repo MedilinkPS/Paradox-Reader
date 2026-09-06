@@ -25,7 +25,7 @@ namespace ParadoxReader
         private const int HEADER_SIZE  = 6; // leftChild(2) + reserved(2) + usedBytes(2)
 
         private readonly ParadoxFile table;
-        private readonly ParadoxFile.FieldInfo[] primaryKeyFields;
+        private readonly ParadoxFile.FieldInfo[] primaryKeyFieldsArray;
         private readonly int keyDataSize;
         private readonly int entrySize;
         private readonly int blockCapacity;
@@ -36,8 +36,8 @@ namespace ParadoxReader
             this.table = table;
             this.FilePath = filePath;
 
-            this.primaryKeyFields = table.FieldTypes.Take(table.primaryKeyFields).ToArray();
-            foreach (var f in this.primaryKeyFields)
+            this.primaryKeyFieldsArray = table.FieldTypes.Take(table.primaryKeyFields).ToArray();
+            foreach (var f in this.primaryKeyFieldsArray)
                 keyDataSize += f.fSize;
 
             entrySize     = keyDataSize + POINTER_SIZE;
@@ -152,7 +152,7 @@ namespace ParadoxReader
         /// </summary>
         private ParadoxReader.ParadoxRecord BuildSyntheticRecord(PxEntry entry)
         {
-            var values = KeySerializer.Deserialize(entry.KeyData, primaryKeyFields);
+            var values = KeySerializer.Deserialize(entry.KeyData, primaryKeyFieldsArray);
             return new ParadoxReader.ParadoxRecord(entry.BlockNumber, 0, values);
         }
 

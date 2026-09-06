@@ -7,6 +7,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ParadoxReader", "ParadoxRea
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ParadoxTest", "ParadoxTest\ParadoxTest.csproj", "{80E60007-4779-425C-9BA1-8B61AFA3BE75}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ParadoxDesktop", "ParadoxDesktop\ParadoxDesktop.csproj", "{3B38A779-46C9-4774-84A9-4A094684C095}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -40,6 +42,18 @@ Global
 		{80E60007-4779-425C-9BA1-8B61AFA3BE75}.Release|x64.Build.0 = Release|Any CPU
 		{80E60007-4779-425C-9BA1-8B61AFA3BE75}.Release|x86.ActiveCfg = Release|Any CPU
 		{80E60007-4779-425C-9BA1-8B61AFA3BE75}.Release|x86.Build.0 = Release|Any CPU
+		{3B38A779-46C9-4774-84A9-4A094684C095}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{3B38A779-46C9-4774-84A9-4A094684C095}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{3B38A779-46C9-4774-84A9-4A094684C095}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{3B38A779-46C9-4774-84A9-4A094684C095}.Debug|x64.Build.0 = Debug|Any CPU
+		{3B38A779-46C9-4774-84A9-4A094684C095}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{3B38A779-46C9-4774-84A9-4A094684C095}.Debug|x86.Build.0 = Debug|Any CPU
+		{3B38A779-46C9-4774-84A9-4A094684C095}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{3B38A779-46C9-4774-84A9-4A094684C095}.Release|Any CPU.Build.0 = Release|Any CPU
+		{3B38A779-46C9-4774-84A9-4A094684C095}.Release|x64.ActiveCfg = Release|Any CPU
+		{3B38A779-46C9-4774-84A9-4A094684C095}.Release|x64.Build.0 = Release|Any CPU
+		{3B38A779-46C9-4774-84A9-4A094684C095}.Release|x86.ActiveCfg = Release|Any CPU
+		{3B38A779-46C9-4774-84A9-4A094684C095}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
