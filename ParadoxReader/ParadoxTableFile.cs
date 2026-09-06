@@ -37,6 +37,9 @@ namespace ParadoxReader
         public ParadoxPrimaryKey PrimaryKeyIndex;
         private ParadoxBlobFile  BlobFile;
 
+        /// <summary>Full path to this table's .DB file.</summary>
+        public string FilePath => filePath;
+
         private List<SecondaryIndexHandle> secondaryIndexHandles;
 
         /// <summary>
@@ -91,7 +94,7 @@ namespace ParadoxReader
             else
             {
                 long savedPos = stream.Position;
-                stream.Position = 0x70;
+                stream.Position = ParadoxHeaderOffsets.ChangeCount4;
                 using (var r = new BinaryReader(stream, Encoding.Default, leaveOpen: true))
                     tableVersion = r.ReadInt16();
                 stream.Position = savedPos;
@@ -173,12 +176,11 @@ namespace ParadoxReader
         /// </summary>
         private void EnsureHasBlobFlagSet()
         {
-            const long HasBlobFlagOffset = 0x74;
-            this.stream.Position = HasBlobFlagOffset;
+            this.stream.Position = ParadoxHeaderOffsets.HasBlobFlag;
             int current = this.stream.ReadByte();
             if (current != 1)
             {
-                this.stream.Position = HasBlobFlagOffset;
+                this.stream.Position = ParadoxHeaderOffsets.HasBlobFlag;
                 this.stream.WriteByte(1);
                 this.stream.Flush();
             }
@@ -281,7 +283,7 @@ namespace ParadoxReader
         /// <summary>AutoIncVal (longint) is at offset 0x49.</summary>
         private void WriteAutoIncValToHeader()
         {
-            stream.Position = 0x49;
+            stream.Position = ParadoxHeaderOffsets.AutoIncVal;
             using (var w = new BinaryWriter(stream, Encoding.Default, leaveOpen: true))
                 w.Write(autoIncVal);
         }
@@ -440,7 +442,7 @@ namespace ParadoxReader
         /// <summary>RecordCount is at offset 0x06 (int32), after RecordSize(2)+headerSize(2)+FileType(1)+maxTableSize(1).</summary>
         private void WriteRecordCountToHeader()
         {
-            stream.Position = 0x06;
+            stream.Position = ParadoxHeaderOffsets.RecordCount;
             using (var w = new BinaryWriter(stream, Encoding.Default, leaveOpen: true))
                 w.Write(RecordCount);
         }
@@ -460,7 +462,7 @@ namespace ParadoxReader
             tableVersion = newValue;
             if (V4Header != null) V4Header.changeCount4 = newValue;
 
-            stream.Position = 0x70;
+            stream.Position = ParadoxHeaderOffsets.ChangeCount4;
             using (var w = new BinaryWriter(stream, Encoding.Default, leaveOpen: true))
                 w.Write(newValue);
         }
@@ -473,7 +475,7 @@ namespace ParadoxReader
         /// </summary>
         private void WriteBlockHeadersToFileHeader()
         {
-            stream.Position = 0x0A;
+            stream.Position = ParadoxHeaderOffsets.BlockChain;
             using (var w = new BinaryWriter(stream, Encoding.Default, leaveOpen: true))
             {
                 w.Write(nextBlock);
@@ -488,7 +490,7 @@ namespace ParadoxReader
             if (fileBlocks > maxBlocks)
             {
                 maxBlocks = fileBlocks;
-                stream.Position = 0x3A;
+                stream.Position = ParadoxHeaderOffsets.MaxBlocks;
                 using (var w = new BinaryWriter(stream, Encoding.Default, leaveOpen: true))
                     w.Write(maxBlocks);
             }
@@ -505,7 +507,7 @@ namespace ParadoxReader
             changeCount1++;
             if (changeCount1 == 0) changeCount2++; // carry on overflow
 
-            stream.Position = 0x2D;
+            stream.Position = ParadoxHeaderOffsets.ChangeCount1;
             using (var w = new BinaryWriter(stream, Encoding.Default, leaveOpen: true))
             {
                 w.Write(changeCount1);

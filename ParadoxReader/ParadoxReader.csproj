@@ -67,6 +67,7 @@
     <Compile Include="ParadoxFile.FieldInfo.cs" />
     <Compile Include="ParadoxFile.V4Hdr.cs" />
     <Compile Include="ParadoxFileType.cs" />
+    <Compile Include="ParadoxHeaderOffsets.cs" />
     <Compile Include="ParadoxPrimaryKey.cs" />
     <Compile Include="ParadoxTableFile.cs" />
     <Compile Include="ParadoxFileLock.cs" />
@@ -80,6 +81,7 @@
     <Compile Include="SecondaryIndexDiscovery.cs" />
     <Compile Include="SecondaryIndexHandle.cs" />
     <Compile Include="SecondaryIndexInfo.cs" />
+    <Compile Include="TableRebuilder.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="app.config" />

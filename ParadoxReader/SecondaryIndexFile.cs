@@ -240,7 +240,7 @@ namespace ParadoxReader
             if (depth > MAX_TREE_DEPTH)
                 throw new InvalidOperationException(
                     $"[SecondaryIndexFile.EnumerateNode] Exceeded max tree depth ({MAX_TREE_DEPTH}) for '{FilePath}'; " +
-                    "the index file appears to be corrupt or cyclic.");
+                    "the index file appears to be corrupt or cyclic. Consider using TableRebuilder.Rebuild to rebuild the table and its indexes.");
 
             PxBlock cur = node;
             var visited = new HashSet<ushort>();
@@ -249,7 +249,7 @@ namespace ParadoxReader
                 if (!visited.Add(cur.BlockNumber))
                     throw new InvalidOperationException(
                         $"[SecondaryIndexFile.EnumerateNode] Detected a cyclic leaf/sibling chain in '{FilePath}' " +
-                        $"(block {cur.BlockNumber} revisited); the index file appears to be corrupt.");
+                        $"(block {cur.BlockNumber} revisited); the index file appears to be corrupt. Consider using TableRebuilder.Rebuild to rebuild the table and its indexes.");
 
                 // Branch entries always have RecordCount == 0 (see SplitChild),
                 // while leaf entries always have RecordCount > 0 (guarded in
@@ -406,7 +406,7 @@ namespace ParadoxReader
         public void SyncAutoIncVal(int autoIncVal)
         {
             indexFile.autoIncVal = autoIncVal;
-            indexFile.stream.Position = 0x49;
+            indexFile.stream.Position = ParadoxHeaderOffsets.AutoIncVal;
             using (var w = new BinaryWriter(indexFile.stream, Encoding.Default, leaveOpen: true))
                 w.Write(indexFile.autoIncVal);
         }
@@ -419,7 +419,7 @@ namespace ParadoxReader
         /// </summary>
         public void SyncTableVersion(short changeCount4)
         {
-            indexFile.stream.Position = 0x70;
+            indexFile.stream.Position = ParadoxHeaderOffsets.ChangeCount4;
             using (var w = new BinaryWriter(indexFile.stream, Encoding.Default, leaveOpen: true))
                 w.Write(changeCount4);
         }
@@ -431,11 +431,11 @@ namespace ParadoxReader
         /// </summary>
         public void IncrementWriteCounter()
         {
-            indexFile.stream.Position = 0x2C;
+            indexFile.stream.Position = ParadoxHeaderOffsets.WriteCounter;
             int current = indexFile.stream.ReadByte();
             if (current < 0) current = 0;
             byte next = (byte)(current + 1);
-            indexFile.stream.Position = 0x2C;
+            indexFile.stream.Position = ParadoxHeaderOffsets.WriteCounter;
             indexFile.stream.WriteByte(next);
         }
 
@@ -582,7 +582,7 @@ namespace ParadoxReader
             if (depth > MAX_TREE_DEPTH)
                 throw new InvalidOperationException(
                     $"[SecondaryIndexFile.InsertNonFull] Exceeded max tree depth ({MAX_TREE_DEPTH}) for '{FilePath}'; " +
-                    "the index file appears to be corrupt or cyclic.");
+                    "the index file appears to be corrupt or cyclic. Consider using TableRebuilder.Rebuild to rebuild the table and its indexes.");
 
             int i = node.Entries.Count - 1;
             if (IsLeafNode(node))
@@ -660,7 +660,7 @@ namespace ParadoxReader
             if (depth > MAX_TREE_DEPTH)
                 throw new InvalidOperationException(
                     $"[SecondaryIndexFile.DeleteFromNode] Exceeded max tree depth ({MAX_TREE_DEPTH}) for '{FilePath}'; " +
-                    "the index file appears to be corrupt or cyclic.");
+                    "the index file appears to be corrupt or cyclic. Consider using TableRebuilder.Rebuild to rebuild the table and its indexes.");
 
             int i = FindKeyIndex(node, keyData);
             if (i < node.Entries.Count &&
@@ -697,7 +697,7 @@ namespace ParadoxReader
                 if (++depth > MAX_TREE_DEPTH)
                     throw new InvalidOperationException(
                         $"[SecondaryIndexFile.GetPredecessor] Exceeded max tree depth ({MAX_TREE_DEPTH}) for '{FilePath}'; " +
-                        "the index file appears to be corrupt or cyclic.");
+                        "the index file appears to be corrupt or cyclic. Consider using TableRebuilder.Rebuild to rebuild the table and its indexes.");
                 cur = ReadBlock(cur.Entries[cur.Entries.Count - 1].BlockNumber);
             }
             return cur.Entries[cur.Entries.Count - 1];
@@ -729,7 +729,8 @@ namespace ParadoxReader
             if (pos < indexFile.headerSize || pos + blockSize > indexFile.stream.Length)
                 throw new InvalidOperationException(
                     $"[SecondaryIndexFile.ReadBlock] Block {blockNumber} is out of range for '{FilePath}'. " +
-                    $"offset={pos}, blockSize={blockSize}, streamLength={indexFile.stream.Length}, headerSize={indexFile.headerSize}.");
+                    $"offset={pos}, blockSize={blockSize}, streamLength={indexFile.stream.Length}, headerSize={indexFile.headerSize}. " +
+                    "The index file appears to be corrupt. Consider using TableRebuilder.Rebuild to rebuild the table and its indexes.");
 
             indexFile.stream.Position = pos;
             using (var r = new BinaryReader(indexFile.stream, Encoding.Default, leaveOpen: true))
@@ -816,7 +817,7 @@ namespace ParadoxReader
             indexFile.nextBlock  = n;
             indexFile.lastBlock  = n;
             indexFile.fileBlocks = blockCountFromBase;
-            indexFile.stream.Position = 0xA;
+            indexFile.stream.Position = ParadoxHeaderOffsets.BlockChain;
             using (var w = new BinaryWriter(indexFile.stream, Encoding.Default, leaveOpen: true))
             {
                 w.Write(indexFile.nextBlock);
@@ -830,7 +831,7 @@ namespace ParadoxReader
             if (blockCountFromBase > indexFile.maxBlocks)
             {
                 indexFile.maxBlocks = blockCountFromBase;
-                indexFile.stream.Position = 0x3A;
+                indexFile.stream.Position = ParadoxHeaderOffsets.MaxBlocks;
                 using (var w = new BinaryWriter(indexFile.stream, Encoding.Default, leaveOpen: true))
                     w.Write(indexFile.maxBlocks);
             }
@@ -851,7 +852,7 @@ namespace ParadoxReader
         private void UpdateRootBlockId(ushort newRootId)
         {
             indexFile.pxRootBlockId = newRootId;
-            indexFile.stream.Position = 0x1E;
+            indexFile.stream.Position = ParadoxHeaderOffsets.PxRootBlockId;
             using (var w = new BinaryWriter(indexFile.stream, Encoding.Default, leaveOpen: true))
                 w.Write(newRootId);
         }
@@ -864,7 +865,7 @@ namespace ParadoxReader
         private void UpdateLevelCount(byte levelCount)
         {
             indexFile.pxLevelCount = levelCount;
-            indexFile.stream.Position = 0x20;
+            indexFile.stream.Position = ParadoxHeaderOffsets.PxLevelCount;
             using (var w = new BinaryWriter(indexFile.stream, Encoding.Default, leaveOpen: true))
                 w.Write(indexFile.pxLevelCount);
         }
@@ -878,7 +879,7 @@ namespace ParadoxReader
         private void UpdateRecordCount(int recordCount)
         {
             indexFile.RecordCount = recordCount;
-            indexFile.stream.Position = 0x6;
+            indexFile.stream.Position = ParadoxHeaderOffsets.RecordCount;
             using (var w = new BinaryWriter(indexFile.stream, Encoding.Default, leaveOpen: true))
                 w.Write(indexFile.RecordCount);
         }

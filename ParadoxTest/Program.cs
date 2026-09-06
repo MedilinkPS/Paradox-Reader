@@ -42,6 +42,12 @@ namespace ParadoxTest
                 return;
             }
 
+            if (args.Length > 0 && args[0] == "rebuildtest")
+            {
+                MiscTests.RunRebuildTestMode();
+                return;
+            }
+
             if ((args.Length > 0 && args[0] == "corpustest") || args.Length == 0)
             {
                 // Usage: ParadoxTest.exe [corpustest] [dataRoot] [maxTables] [filter]

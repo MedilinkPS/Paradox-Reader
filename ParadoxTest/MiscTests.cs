@@ -119,6 +119,8 @@ namespace ParadoxTest
             RunStandardTestSuite();
         }
 
+        public static void RunRebuildTestMode() => RunRebuildTest();
+
         public static void EnsureCleanState()
         {
             Directory.CreateDirectory(TestFolder);
@@ -171,6 +173,173 @@ namespace ParadoxTest
 
             Console.WriteLine();
             Console.WriteLine("All tests completed.");
+        }
+
+        // --------------------------------------------------------------------
+        // Rebuild (compact & repair) test
+        // --------------------------------------------------------------------
+
+        /// <summary>
+        /// Exercises <see cref="TableRebuilder.Rebuild(string, string)"/> end to
+        /// end: stages the TESTTAB.DB fixture (with data appended so it has a
+        /// non-trivial record set, memo values, and populated secondary
+        /// indexes), captures a snapshot of every record/field value plus the
+        /// record count, rebuilds the table from scratch, then re-opens the
+        /// rebuilt table and verifies the record count and every field value
+        /// match the pre-rebuild snapshot, and that both a primary-index and a
+        /// secondary-index lookup still work correctly against the rebuilt
+        /// indexes.
+        /// </summary>
+        private static void RunRebuildTest()
+        {
+            ResetTestFolder();
+
+            Console.WriteLine("=== Rebuild test: seed data ===");
+            TestAppendRecords();
+
+            string dbPath = Path.Combine(TestFolder, TestTabTableName);
+
+            // Snapshot every record's field values (as strings, so comparison
+            // doesn't need to special-case MemoValue/byte[]/etc.) before the
+            // rebuild, keyed by ID (the AUTOINC primary key), so we can verify
+            // nothing was lost, reordered, or corrupted by the rebuild.
+            var beforeById = new Dictionary<int, string[]>();
+            int beforeCount;
+            using (var table = new ParadoxTableFile(dbPath))
+            {
+                beforeCount = 0;
+                foreach (var rec in table.Enumerate())
+                {
+                    int id = Convert.ToInt32(rec.DataValues[F_ID]);
+                    beforeById[id] = rec.DataValues.Select(FieldValueToComparableString).ToArray();
+                    beforeCount++;
+                }
+            }
+            Console.WriteLine("Captured {0} record(s) before rebuild.", beforeCount);
+
+            var beforeFileSizes = Directory.GetFiles(TestFolder, Path.GetFileNameWithoutExtension(TestTabTableName) + ".*")
+                .ToDictionary(Path.GetFileName, f => new FileInfo(f).Length);
+
+            Console.WriteLine("=== Rebuild test: rebuilding table ===");
+            var result = TableRebuilder.Rebuild(dbPath);
+            Console.WriteLine("Rebuild complete: {0} record(s) migrated, {1} file(s) rebuilt.",
+                result.RecordsMigrated, result.RebuiltFiles.Count);
+            foreach (var f in result.RebuiltFiles)
+                Console.WriteLine("  rebuilt: {0}", f);
+
+            bool allOk = true;
+
+            if (result.RecordsMigrated != beforeCount)
+            {
+                Console.WriteLine("  [FAIL] RecordsMigrated={0}, expected {1}", result.RecordsMigrated, beforeCount);
+                allOk = false;
+            }
+
+            Console.WriteLine("=== Rebuild test: verifying rebuilt table ===");
+            using (var table = new ParadoxTableFile(dbPath))
+            {
+                var afterById = new Dictionary<int, string[]>();
+                int afterCount = 0;
+                foreach (var rec in table.Enumerate())
+                {
+                    int id = Convert.ToInt32(rec.DataValues[F_ID]);
+                    afterById[id] = rec.DataValues.Select(FieldValueToComparableString).ToArray();
+                    afterCount++;
+                }
+
+                if (afterCount != beforeCount)
+                {
+                    Console.WriteLine("  [FAIL] Record count after rebuild = {0}, expected {1}", afterCount, beforeCount);
+                    allOk = false;
+                }
+
+                foreach (var kvp in beforeById)
+                {
+                    if (!afterById.TryGetValue(kvp.Key, out var afterValues))
+                    {
+                        Console.WriteLine("  [FAIL] Record id={0} missing after rebuild", kvp.Key);
+                        allOk = false;
+                        continue;
+                    }
+
+                    for (int i = 0; i < kvp.Value.Length; i++)
+                    {
+                        if (kvp.Value[i] != afterValues[i])
+                        {
+                            Console.WriteLine("  [FAIL] Record id={0} field[{1}] mismatch: before='{2}' after='{3}'",
+                                kvp.Key, i, kvp.Value[i], afterValues[i]);
+                            allOk = false;
+                        }
+                    }
+                }
+
+                // Primary index lookup still works against the rebuilt .PX.
+                var pkHit = table.PrimaryKeyIndex?
+                    .Enumerate(new ParadoxCondition.Compare(ParadoxCompareOperator.Equal, 3, F_ID, F_ID))
+                    .FirstOrDefault();
+                if (pkHit == null)
+                {
+                    Console.WriteLine("  [FAIL] Primary index lookup for ID=3 returned no result after rebuild.");
+                    allOk = false;
+                }
+                else
+                {
+                    Console.WriteLine("  [ok] Primary index lookup for ID=3 -> SECVAL={0}", pkHit.DataValues[F_SECVAL]);
+                }
+
+                // Secondary index lookup (SECIDX / SECVAL) still works against
+                // the rebuilt .XG0/.YG0.
+                var secIdx = table.SecondaryIndexes?.FirstOrDefault(ix =>
+                    ix.FilePath.EndsWith(".XG0", StringComparison.OrdinalIgnoreCase));
+                if (secIdx == null)
+                {
+                    Console.WriteLine("  [FAIL] Secondary index (SECIDX/.XG0) not found after rebuild.");
+                    allOk = false;
+                }
+                else
+                {
+                    var secHit = secIdx
+                        .Enumerate(new ParadoxCondition.Compare(ParadoxCompareOperator.Equal, (short)3, F_SECVAL, 0))
+                        .FirstOrDefault();
+                    if (secHit == null)
+                    {
+                        Console.WriteLine("  [FAIL] Secondary index lookup for SECVAL=3 returned no result after rebuild.");
+                        allOk = false;
+                    }
+                    else
+                    {
+                        Console.WriteLine("  [ok] Secondary index lookup for SECVAL=3 -> ID={0}", secHit.DataValues[F_ID]);
+                    }
+                }
+            }
+
+            var afterFileSizes = Directory.GetFiles(TestFolder, Path.GetFileNameWithoutExtension(TestTabTableName) + ".*")
+                .ToDictionary(Path.GetFileName, f => new FileInfo(f).Length);
+            foreach (var kvp in beforeFileSizes)
+            {
+                afterFileSizes.TryGetValue(kvp.Key, out var afterSize);
+                Console.WriteLine("  {0}: before={1} bytes, after={2} bytes", kvp.Key, kvp.Value, afterSize);
+            }
+
+            Console.WriteLine();
+            Console.WriteLine(allOk ? "Rebuild test PASSED." : "Rebuild test FAILED.");
+        }
+
+        private static string FieldValueToComparableString(object value)
+        {
+            switch (value)
+            {
+                case null:
+                    return string.Empty;
+                case MemoValue mv:
+                    return mv.Text ?? string.Empty;
+                case byte[] bytes:
+                    return BitConverter.ToString(bytes);
+                case DateTime dt:
+                    return dt.ToString("O");
+                default:
+                    return Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture);
+            }
         }
 
         // --------------------------------------------------------------------

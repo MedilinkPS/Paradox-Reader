@@ -175,6 +175,12 @@ namespace ParadoxTest
                 var subResults = new List<string>();
                 bool anySubFail = false;
 
+                // Hoisted so the post-rebuild verification pass (below) can
+                // re-check the same primary-key/secondary-index min/max ranges
+                // against the rebuilt table without recomputing them.
+                object[] pkMin = null, pkMax = null;
+                var secondaryMinMax = new Dictionary<int, MinMax>();
+
                 using (var table = new ParadoxTableFile(harnessDbPath))
                 {
                     schema = CaptureSchema(table);
@@ -186,8 +192,6 @@ namespace ParadoxTest
 
                     // --- Baseline full scan ---
                     baselineCount = 0;
-                    object[] pkMin = null, pkMax = null;
-                    var secondaryMinMax = new Dictionary<int, MinMax>();
 
                     foreach (var rec in table.Enumerate())
                     {
@@ -353,6 +357,21 @@ namespace ParadoxTest
                 else
                 {
                     subResults.Add("sqlrunner=SKIP");
+                }
+
+                // --- Rebuild (compact and repair) + re-verify ---
+                try
+                {
+                    string rebuildOutcome = RunRebuildAndVerify(harnessDbPath, schema, baselineCount, pkMin, pkMax, secondaryMinMax);
+                    Console.WriteLine("  [Test 7: Rebuild + reread] {0}", rebuildOutcome);
+                    subResults.Add("rebuild=" + rebuildOutcome);
+                    if (rebuildOutcome.StartsWith("FAIL")) anySubFail = true;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine("  [Test 7: Rebuild + reread] FAIL - {0}", ex.Message);
+                    subResults.Add("rebuild=FAIL:" + ex.GetType().Name);
+                    anySubFail = true;
                 }
 
                 detail = string.Join(", ", subResults);
@@ -540,6 +559,83 @@ namespace ParadoxTest
             foreach (var c in Path.GetInvalidFileNameChars())
                 name = name.Replace(c, '_');
             return name;
+        }
+
+        // ----------------------------------------------------------------
+        // Rebuild (compact and repair) verification
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Rebuilds <paramref name="dbPath"/> via <see cref="TableRebuilder.Rebuild(string, string)"/>
+        /// and re-reads the result, checking that the record count and the
+        /// same primary-key/secondary-index range lookups computed against
+        /// the original table still hold against the rebuilt one. This
+        /// confirms TableRebuilder's output is itself readable (both by a
+        /// full scan and via its freshly rebuilt indexes) - i.e. that the
+        /// original table and the rebuilt table both work.
+        /// </summary>
+        private static string RunRebuildAndVerify(
+            string dbPath, TableSchemaInfo schema, int expectedCount,
+            object[] pkMin, object[] pkMax, Dictionary<int, MinMax> secondaryMinMax)
+        {
+            var result = TableRebuilder.Rebuild(dbPath);
+
+            using (var table = new ParadoxTableFile(dbPath))
+            {
+                int postCount = 0;
+                foreach (var _ in table.Enumerate()) postCount++;
+
+                if (postCount != expectedCount)
+                    return "FAIL(count-mismatch:pre=" + expectedCount + ",post=" + postCount + ")";
+
+                // --- Primary key lookup against rebuilt indexes ---
+                if (table.PrimaryKeyIndex != null && pkMin != null)
+                {
+                    int expected = 0;
+                    foreach (var rec in table.Enumerate())
+                        if (CompareForMinMax(rec.DataValues[0], pkMin[0]) >= 0 && CompareForMinMax(rec.DataValues[0], pkMax[0]) <= 0)
+                            expected++;
+
+                    var cond = new ParadoxCondition.LogicalAnd(
+                        new ParadoxCondition.Compare(ParadoxCompareOperator.GreaterOrEqual, pkMin[0], 0, 0),
+                        new ParadoxCondition.Compare(ParadoxCompareOperator.LessOrEqual, pkMax[0], 0, 0));
+
+                    int viaIndex = 0;
+                    using (var rdr = new ParadoxDataReader(table, table.PrimaryKeyIndex.Enumerate(cond)))
+                        while (rdr.Read()) viaIndex++;
+
+                    if (viaIndex != expected)
+                        return "FAIL(pklookup:expected=" + expected + ",viaIndex=" + viaIndex + ")";
+                }
+
+                // --- Secondary index lookups against rebuilt indexes ---
+                foreach (var idx in table.SecondaryIndexes)
+                {
+                    if (idx.FieldIndices.Length == 0) continue;
+                    int fi = idx.FieldIndices[0];
+                    if (!secondaryMinMax.TryGetValue(fi, out var mm)) continue;
+
+                    int expected = 0;
+                    foreach (var rec in table.Enumerate())
+                        if (fi < rec.DataValues.Length &&
+                            CompareForMinMax(rec.DataValues[fi], mm.Min) >= 0 &&
+                            CompareForMinMax(rec.DataValues[fi], mm.Max) <= 0)
+                            expected++;
+
+                    var cond = new ParadoxCondition.LogicalAnd(
+                        new ParadoxCondition.Compare(ParadoxCompareOperator.GreaterOrEqual, mm.Min, fi, 0),
+                        new ParadoxCondition.Compare(ParadoxCompareOperator.LessOrEqual, mm.Max, fi, 0));
+
+                    int viaIndex = 0;
+                    using (var rdr = new ParadoxDataReader(table, idx.Enumerate(cond)))
+                        while (rdr.Read()) viaIndex++;
+
+                    if (viaIndex != expected)
+                        return "FAIL(secidx" + fi + ":expected=" + expected + ",viaIndex=" + viaIndex + ")";
+                }
+            }
+
+            return "PASS(migrated=" + result.RecordsMigrated + ")";
         }
 
         // ----------------------------------------------------------------
