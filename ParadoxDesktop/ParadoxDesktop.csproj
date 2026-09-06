@@ -68,6 +68,7 @@
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="TableInfoForm.Designer.cs" />
+    <Compile Include="UndoRedoManager.cs" />
     <EmbeddedResource Include="ParadoxDesktopMainForm.resx">
       <DependentUpon>ParadoxDesktopMainForm.cs</DependentUpon>
     </EmbeddedResource>

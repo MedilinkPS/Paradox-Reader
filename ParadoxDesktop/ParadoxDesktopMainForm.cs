@@ -142,6 +142,48 @@ namespace ParadoxDesktop
             editor.ModifyCurrentMemoOrBlob();
         }
 
+        private void undoMenuItem_Click(object sender, EventArgs e)
+        {
+            ActiveTableEditor?.Undo();
+        }
+
+        private void redoMenuItem_Click(object sender, EventArgs e)
+        {
+            ActiveTableEditor?.Redo();
+        }
+
+        private void cutMenuItem_Click(object sender, EventArgs e)
+        {
+            if (ActiveTableEditor != null)
+                ActiveTableEditor.Cut();
+            else
+                ActiveSqlEditor?.Cut();
+        }
+
+        private void copyMenuItem_Click(object sender, EventArgs e)
+        {
+            if (ActiveTableEditor != null)
+                ActiveTableEditor.Copy();
+            else
+                ActiveSqlEditor?.Copy();
+        }
+
+        private void pasteMenuItem_Click(object sender, EventArgs e)
+        {
+            if (ActiveTableEditor != null)
+                ActiveTableEditor.Paste();
+            else
+                ActiveSqlEditor?.Paste();
+        }
+
+        private void selectAllMenuItem_Click(object sender, EventArgs e)
+        {
+            if (ActiveTableEditor != null)
+                ActiveTableEditor.SelectAllCells();
+            else
+                ActiveSqlEditor?.SelectAll();
+        }
+
         // ----------------------------------------------------------------
         // Record menu
         // ----------------------------------------------------------------

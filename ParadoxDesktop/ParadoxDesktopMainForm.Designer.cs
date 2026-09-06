@@ -40,6 +40,15 @@
             this.fileMenuSeparator1 = new System.Windows.Forms.ToolStripSeparator();
             this.exitMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.editMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.undoMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.redoMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.editMenuSeparator1 = new System.Windows.Forms.ToolStripSeparator();
+            this.cutMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.copyMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.pasteMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.editMenuSeparator2 = new System.Windows.Forms.ToolStripSeparator();
+            this.selectAllMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.editMenuSeparator3 = new System.Windows.Forms.ToolStripSeparator();
             this.editModeMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.modifyMemoMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.recordMenuItem = new System.Windows.Forms.ToolStripMenuItem();
@@ -141,11 +150,83 @@
             // editMenuItem
             //
             this.editMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this.undoMenuItem,
+            this.redoMenuItem,
+            this.editMenuSeparator1,
+            this.cutMenuItem,
+            this.copyMenuItem,
+            this.pasteMenuItem,
+            this.editMenuSeparator2,
+            this.selectAllMenuItem,
+            this.editMenuSeparator3,
             this.editModeMenuItem,
             this.modifyMemoMenuItem});
             this.editMenuItem.Name = "editMenuItem";
             this.editMenuItem.Size = new System.Drawing.Size(39, 20);
             this.editMenuItem.Text = "&Edit";
+            //
+            // undoMenuItem
+            //
+            this.undoMenuItem.Name = "undoMenuItem";
+            this.undoMenuItem.ShortcutKeys = ((System.Windows.Forms.Keys)((System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.Z)));
+            this.undoMenuItem.Size = new System.Drawing.Size(220, 22);
+            this.undoMenuItem.Text = "&Undo";
+            this.undoMenuItem.Click += new System.EventHandler(this.undoMenuItem_Click);
+            //
+            // redoMenuItem
+            //
+            this.redoMenuItem.Name = "redoMenuItem";
+            this.redoMenuItem.ShortcutKeys = ((System.Windows.Forms.Keys)((System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.Y)));
+            this.redoMenuItem.Size = new System.Drawing.Size(220, 22);
+            this.redoMenuItem.Text = "&Redo";
+            this.redoMenuItem.Click += new System.EventHandler(this.redoMenuItem_Click);
+            //
+            // editMenuSeparator1
+            //
+            this.editMenuSeparator1.Name = "editMenuSeparator1";
+            this.editMenuSeparator1.Size = new System.Drawing.Size(217, 6);
+            //
+            // cutMenuItem
+            //
+            this.cutMenuItem.Name = "cutMenuItem";
+            this.cutMenuItem.ShortcutKeys = ((System.Windows.Forms.Keys)((System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.X)));
+            this.cutMenuItem.Size = new System.Drawing.Size(220, 22);
+            this.cutMenuItem.Text = "Cu&t";
+            this.cutMenuItem.Click += new System.EventHandler(this.cutMenuItem_Click);
+            //
+            // copyMenuItem
+            //
+            this.copyMenuItem.Name = "copyMenuItem";
+            this.copyMenuItem.ShortcutKeys = ((System.Windows.Forms.Keys)((System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.C)));
+            this.copyMenuItem.Size = new System.Drawing.Size(220, 22);
+            this.copyMenuItem.Text = "&Copy";
+            this.copyMenuItem.Click += new System.EventHandler(this.copyMenuItem_Click);
+            //
+            // pasteMenuItem
+            //
+            this.pasteMenuItem.Name = "pasteMenuItem";
+            this.pasteMenuItem.ShortcutKeys = ((System.Windows.Forms.Keys)((System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.V)));
+            this.pasteMenuItem.Size = new System.Drawing.Size(220, 22);
+            this.pasteMenuItem.Text = "&Paste";
+            this.pasteMenuItem.Click += new System.EventHandler(this.pasteMenuItem_Click);
+            //
+            // editMenuSeparator2
+            //
+            this.editMenuSeparator2.Name = "editMenuSeparator2";
+            this.editMenuSeparator2.Size = new System.Drawing.Size(217, 6);
+            //
+            // selectAllMenuItem
+            //
+            this.selectAllMenuItem.Name = "selectAllMenuItem";
+            this.selectAllMenuItem.ShortcutKeys = ((System.Windows.Forms.Keys)((System.Windows.Forms.Keys.Control | System.Windows.Forms.Keys.A)));
+            this.selectAllMenuItem.Size = new System.Drawing.Size(220, 22);
+            this.selectAllMenuItem.Text = "Select &All";
+            this.selectAllMenuItem.Click += new System.EventHandler(this.selectAllMenuItem_Click);
+            //
+            // editMenuSeparator3
+            //
+            this.editMenuSeparator3.Name = "editMenuSeparator3";
+            this.editMenuSeparator3.Size = new System.Drawing.Size(217, 6);
             //
             // editModeMenuItem
             //
@@ -279,6 +360,15 @@
         private System.Windows.Forms.ToolStripSeparator fileMenuSeparator1;
         private System.Windows.Forms.ToolStripMenuItem exitMenuItem;
         private System.Windows.Forms.ToolStripMenuItem editMenuItem;
+        private System.Windows.Forms.ToolStripMenuItem undoMenuItem;
+        private System.Windows.Forms.ToolStripMenuItem redoMenuItem;
+        private System.Windows.Forms.ToolStripSeparator editMenuSeparator1;
+        private System.Windows.Forms.ToolStripMenuItem cutMenuItem;
+        private System.Windows.Forms.ToolStripMenuItem copyMenuItem;
+        private System.Windows.Forms.ToolStripMenuItem pasteMenuItem;
+        private System.Windows.Forms.ToolStripSeparator editMenuSeparator2;
+        private System.Windows.Forms.ToolStripMenuItem selectAllMenuItem;
+        private System.Windows.Forms.ToolStripSeparator editMenuSeparator3;
         private System.Windows.Forms.ToolStripMenuItem editModeMenuItem;
         private System.Windows.Forms.ToolStripMenuItem modifyMemoMenuItem;
         private System.Windows.Forms.ToolStripMenuItem recordMenuItem;

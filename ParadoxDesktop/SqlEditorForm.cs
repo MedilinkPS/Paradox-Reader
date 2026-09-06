@@ -115,5 +115,17 @@ namespace ParadoxDesktop
 
         private static bool IsSelect(string statement) =>
             statement.TrimStart().StartsWith("select", StringComparison.OrdinalIgnoreCase);
+
+        // ----------------------------------------------------------------
+        // Edit menu (Cut/Copy/Paste/Select All)
+        // ----------------------------------------------------------------
+
+        public void Cut() => sqlTextBox.Cut();
+
+        public void Copy() => sqlTextBox.Copy();
+
+        public void Paste() => sqlTextBox.Paste();
+
+        public new void SelectAll() => sqlTextBox.SelectAll();
     }
 }

@@ -25,6 +25,12 @@ namespace ParadoxDesktop
 
         private bool editModeEnabled;
 
+        private readonly UndoRedoManager undoRedoManager = new UndoRedoManager();
+
+        // Guards CellValuePushed so that values applied by Undo/Redo aren't
+        // themselves recorded as new history entries.
+        private bool suppressHistory;
+
         public string TableFilePath => table?.FilePath;
 
         public bool EditModeEnabled => editModeEnabled;
@@ -86,6 +92,7 @@ namespace ParadoxDesktop
 
             rowCursor = new RowCursor(table);
             dataGridView.RowCount = rowCursor.TotalRows;
+            undoRedoManager.Clear();
 
             statusLabel.Text = string.Format("{0} record(s). {1}", table.RecordCount,
                 editModeEnabled ? "Edit mode ON" : "Read-only (F9 to edit)");
@@ -140,6 +147,7 @@ namespace ParadoxDesktop
         public void ToggleEditMode()
         {
             editModeEnabled = !editModeEnabled;
+            dataGridView.ReadOnly = !editModeEnabled;
             foreach (DataGridViewColumn column in dataGridView.Columns)
                 column.ReadOnly = !editModeEnabled;
             statusLabel.Text = editModeEnabled
@@ -182,17 +190,175 @@ namespace ParadoxDesktop
             var newValues = record.CloneDataValues();
             if (e.ColumnIndex >= newValues.Length) return;
 
-            newValues[e.ColumnIndex] = FromGridValue(newValues[e.ColumnIndex], e.Value);
+            object oldValue = newValues[e.ColumnIndex];
+            object newValue = FromGridValue(oldValue, e.Value);
+
+            newValues[e.ColumnIndex] = newValue;
 
             try
             {
                 table.UpdateRecord(record, newValues);
+                statusLabel.Text = "Record updated.";
+
+                if (!suppressHistory)
+                    undoRedoManager.Push(new CellEditAction(this, e.RowIndex, e.ColumnIndex, oldValue, newValue));
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show(this, "Failed to save change:\r\n" + ex.Message, "Update",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        /// <summary>
+        /// Applies a single cell value directly to the underlying record and
+        /// persists it, without going through the grid's push/pull cycle.
+        /// Used by <see cref="CellEditAction"/> to replay Undo/Redo.
+        /// </summary>
+        private void ApplyCellValue(int rowIndex, int columnIndex, object value)
+        {
+            var record = rowCursor.GetRecord(rowIndex);
+            if (record == null) return;
+
+            var newValues = record.CloneDataValues();
+            if (columnIndex >= newValues.Length) return;
+
+            newValues[columnIndex] = value;
+
+            try
+            {
+                table.UpdateRecord(record, newValues);
+                dataGridView.InvalidateCell(columnIndex, rowIndex);
                 statusLabel.Text = "Record updated.";
             }
             catch (Exception ex)
             {
                 MessageBox.Show(this, "Failed to save change:\r\n" + ex.Message, "Update",
                     MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        /// <summary>
+        /// A single cell edit recorded on the undo/redo history stack. Undo
+        /// restores the original value; Redo re-applies the edited value.
+        /// </summary>
+        private sealed class CellEditAction : IUndoableAction
+        {
+            private readonly TableEditorForm form;
+            private readonly int rowIndex;
+            private readonly int columnIndex;
+            private readonly object oldValue;
+            private readonly object newValue;
+
+            public CellEditAction(TableEditorForm form, int rowIndex, int columnIndex, object oldValue, object newValue)
+            {
+                this.form = form;
+                this.rowIndex = rowIndex;
+                this.columnIndex = columnIndex;
+                this.oldValue = oldValue;
+                this.newValue = newValue;
+            }
+
+            public void Undo()
+            {
+                form.suppressHistory = true;
+                try
+                {
+                    form.ApplyCellValue(rowIndex, columnIndex, oldValue);
+                }
+                finally
+                {
+                    form.suppressHistory = false;
+                }
+            }
+
+            public void Redo()
+            {
+                form.suppressHistory = true;
+                try
+                {
+                    form.ApplyCellValue(rowIndex, columnIndex, newValue);
+                }
+                finally
+                {
+                    form.suppressHistory = false;
+                }
+            }
+        }
+
+        // ----------------------------------------------------------------
+        // Edit menu (Undo/Redo/Cut/Copy/Paste/Select All)
+        // ----------------------------------------------------------------
+
+        public void Undo()
+        {
+            if (!undoRedoManager.CanUndo) return;
+            undoRedoManager.Undo();
+        }
+
+        public void Redo()
+        {
+            if (!undoRedoManager.CanRedo) return;
+            undoRedoManager.Redo();
+        }
+
+        public void Cut()
+        {
+            if (!editModeEnabled) return;
+            Copy();
+            ClearSelectedCells();
+        }
+
+        public void Copy()
+        {
+            if (dataGridView.GetCellCount(DataGridViewElementStates.Selected) == 0) return;
+            var dataObject = dataGridView.GetClipboardContent();
+            if (dataObject != null)
+                Clipboard.SetDataObject(dataObject);
+        }
+
+        public void Paste()
+        {
+            if (!editModeEnabled) return;
+            if (!Clipboard.ContainsText()) return;
+
+            string clipboardText = Clipboard.GetText();
+            var lines = clipboardText.Replace("\r\n", "\n").TrimEnd('\n').Split('\n');
+
+            var currentCell = dataGridView.CurrentCell;
+            if (currentCell == null) return;
+
+            int startRow = currentCell.RowIndex;
+            int startCol = currentCell.ColumnIndex;
+
+            for (int r = 0; r < lines.Length; r++)
+            {
+                int rowIndex = startRow + r;
+                if (rowIndex >= dataGridView.RowCount) break;
+
+                var cells = lines[r].Split('\t');
+                for (int c = 0; c < cells.Length; c++)
+                {
+                    int colIndex = startCol + c;
+                    if (colIndex >= dataGridView.ColumnCount) break;
+                    if (dataGridView.Columns[colIndex].ReadOnly) continue;
+
+                    dataGridView[colIndex, rowIndex].Value = cells[c];
+                }
+            }
+        }
+
+        public void SelectAllCells()
+        {
+            dataGridView.SelectAll();
+        }
+
+        private void ClearSelectedCells()
+        {
+            foreach (DataGridViewCell cell in dataGridView.SelectedCells)
+            {
+                if (!cell.OwningColumn.ReadOnly)
+                    cell.Value = null;
             }
         }
 
@@ -340,6 +506,7 @@ namespace ParadoxDesktop
                 // map rather than trying to patch it incrementally.
                 rowCursor.Refresh();
                 dataGridView.RowCount = rowCursor.TotalRows;
+                undoRedoManager.Clear();
 
                 int newRowIndex = rowCursor.TotalRows - 1;
                 dataGridView.ClearSelection();
@@ -399,6 +566,7 @@ namespace ParadoxDesktop
                 // consistent.
                 rowCursor.Refresh();
                 dataGridView.RowCount = rowCursor.TotalRows;
+                undoRedoManager.Clear();
 
                 statusLabel.Text = string.Format("{0} record(s). Record deleted.", table.RecordCount);
             }
