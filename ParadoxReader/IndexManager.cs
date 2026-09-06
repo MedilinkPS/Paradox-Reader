@@ -26,6 +26,23 @@ namespace ParadoxReader
         /// </summary>
         internal IReadOnlyList<SecondaryIndexFile> SecondaryIndexes => secondaryIndexes;
 
+        /// <summary>
+        /// True if any opened index file (.PX/.Xnn/.Xgn/.Ynn/.Ygn) was
+        /// found to be out of date relative to the parent .DB (its
+        /// autoIncVal doesn't match) when the table was opened. Callers can
+        /// check this without triggering an exception; attempting to
+        /// actually read/write via an out-of-date index still throws
+        /// <see cref="IndexOutOfDateException"/>.
+        /// </summary>
+        public bool IndexOutOfDate { get; private set; }
+
+        /// <summary>
+        /// True specifically if the primary (.PX) index is out of date.
+        /// Used by <see cref="ParadoxTableFile"/> to flag its separate
+        /// read-side <see cref="ParadoxPrimaryKey"/> handle.
+        /// </summary>
+        public bool IsPrimaryIndexOutOfDate { get; private set; }
+
         // ----------------------------------------------------------------
         // Constructor
         // ----------------------------------------------------------------
@@ -43,7 +60,12 @@ namespace ParadoxReader
                 {
                     var keyFields = GetFieldRange(0, primaryKeyFieldCount);
                     PrimaryIndexFile  = new PrimaryIndexFile(pxPath, keyFields);
-                    CheckIndexOutOfDate(PrimaryIndexFile.FilePath, PrimaryIndexFile.AutoIncVal, dbAutoIncVal);
+                    if (IsIndexOutOfDate(PrimaryIndexFile.AutoIncVal, dbAutoIncVal))
+                    {
+                        PrimaryIndexFile.MarkOutOfDate();
+                        IndexOutOfDate = true;
+                        IsPrimaryIndexOutOfDate = true;
+                    }
                 }
             }
 
@@ -62,16 +84,11 @@ namespace ParadoxReader
         /// wrong/empty lookup results or corrupting the index further on
         /// write.
         /// </summary>
-        private static void CheckIndexOutOfDate(string indexFilePath, int indexAutoIncVal, int dbAutoIncVal)
+        private static bool IsIndexOutOfDate(int indexAutoIncVal, int dbAutoIncVal)
         {
-            if (dbAutoIncVal != 0 && indexAutoIncVal != dbAutoIncVal)
-            {
-                throw new IndexOutOfDateException(indexFilePath,
-                    $"Index is out of date: '{indexFilePath}' autoIncVal={indexAutoIncVal} " +
-                    $"does not match table autoIncVal={dbAutoIncVal}. Consider TableRebuilder.Rebuild " +
-                    "to regenerate the index.");
-            }
+            return dbAutoIncVal != 0 && indexAutoIncVal != dbAutoIncVal;
         }
+
 
         // ----------------------------------------------------------------
         // Public API
@@ -172,12 +189,12 @@ namespace ParadoxReader
                 try
                 {
                     var secondaryIndex = new SecondaryIndexFile(info.FilePath, info.IndexedFields, info.FieldIndices);
-                    CheckIndexOutOfDate(secondaryIndex.FilePath, secondaryIndex.AutoIncVal, dbAutoIncVal);
+                    if (IsIndexOutOfDate(secondaryIndex.AutoIncVal, dbAutoIncVal))
+                    {
+                        secondaryIndex.MarkOutOfDate();
+                        IndexOutOfDate = true;
+                    }
                     secondaryIndexes.Add(secondaryIndex);
-                }
-                catch (IndexOutOfDateException)
-                {
-                    throw;
                 }
                 catch (Exception ex)
                 {

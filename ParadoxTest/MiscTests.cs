@@ -333,6 +333,14 @@ namespace ParadoxTest
         /// files themselves hold the fully-populated post-append/post-update
         /// data) and reports what happens when opening it and using its
         /// indexes.
+        ///
+        /// Expected behavior: opening the table succeeds and flags
+        /// ParadoxTableFile.IndexOutOfDate = true (mirroring BDE, which
+        /// still lets you open/scan a table with a stale index); any
+        /// subsequent attempt to actually read/write via the stale index
+        /// (PK lookup, secondary index lookup, or any insert/update/delete
+        /// that touches the index) throws IndexOutOfDateException. A plain
+        /// full-table scan (no index) is unaffected.
         /// </summary>
         private static void RunIndexOutOfDateTest()
         {
@@ -344,6 +352,8 @@ namespace ParadoxTest
 
             string dbPath = Path.Combine(TestFolder, baseName + ".DB");
 
+            bool allOk = true;
+
             Console.WriteLine("=== IndexOutOfDate test: opening table ===");
             try
             {
@@ -351,41 +361,67 @@ namespace ParadoxTest
                 {
                     Console.WriteLine("  [ok] Opened table.");
 
+                    if (!table.IndexOutOfDate)
+                    {
+                        Console.WriteLine("  [FAIL] ParadoxTableFile.IndexOutOfDate was false; expected true.");
+                        allOk = false;
+                    }
+                    else
+                    {
+                        Console.WriteLine("  [ok] ParadoxTableFile.IndexOutOfDate = true, as expected.");
+                    }
+
                     Console.WriteLine("=== IndexOutOfDate test: full scan (no index) ===");
                     int count = 0;
                     foreach (var rec in table.Enumerate()) count++;
-                    Console.WriteLine("  [ok] Full scan: {0} record(s).", count);
+                    Console.WriteLine("  [ok] Full scan: {0} record(s) (unaffected by stale index).", count);
 
-                    Console.WriteLine("=== IndexOutOfDate test: primary index lookup ===");
+                    Console.WriteLine("=== IndexOutOfDate test: primary index lookup (should throw) ===");
                     try
                     {
                         var pkHit = table.PrimaryKeyIndex?
                             .Enumerate(new ParadoxCondition.Compare(ParadoxCompareOperator.Equal, 3, F_ID, F_ID))
                             .FirstOrDefault();
-                        Console.WriteLine("  [ok] PK lookup for ID=3 -> {0}", pkHit != null ? "found" : "not found");
+                        Console.WriteLine("  [FAIL] PK lookup did not throw; returned {0}.", pkHit != null ? "found" : "not found");
+                        allOk = false;
+                    }
+                    catch (IndexOutOfDateException ex)
+                    {
+                        Console.WriteLine("  [ok] PK lookup threw IndexOutOfDateException: {0}", ex.Message);
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine("  [FAIL] PK lookup threw: {0}: {1}", ex.GetType().Name, ex.Message);
+                        Console.WriteLine("  [FAIL] PK lookup threw unexpected {0}: {1}", ex.GetType().Name, ex.Message);
+                        allOk = false;
                     }
 
-                    Console.WriteLine("=== IndexOutOfDate test: append (write path) ===");
+                    Console.WriteLine("=== IndexOutOfDate test: append (write path, should throw) ===");
                     try
                     {
                         var values = BuildAppendValues(table);
                         table.AppendRecord(values);
-                        Console.WriteLine("  [ok] Append succeeded.");
+                        Console.WriteLine("  [FAIL] Append did not throw.");
+                        allOk = false;
+                    }
+                    catch (IndexOutOfDateException ex)
+                    {
+                        Console.WriteLine("  [ok] Append threw IndexOutOfDateException: {0}", ex.Message);
                     }
                     catch (Exception ex)
                     {
-                        Console.WriteLine("  [FAIL] Append threw: {0}: {1}", ex.GetType().Name, ex.Message);
+                        Console.WriteLine("  [FAIL] Append threw unexpected {0}: {1}", ex.GetType().Name, ex.Message);
+                        allOk = false;
                     }
                 }
             }
             catch (Exception ex)
             {
                 Console.WriteLine("  [FAIL] Opening table threw: {0}: {1}", ex.GetType().Name, ex.Message);
+                allOk = false;
             }
+
+            Console.WriteLine();
+            Console.WriteLine(allOk ? "IndexOutOfDate test PASSED." : "IndexOutOfDate test FAILED.");
         }
 
         private static object[] BuildAppendValues(ParadoxTableFile table)

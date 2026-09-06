@@ -55,6 +55,33 @@ namespace ParadoxReader
         /// <summary>This index's own autoIncVal header field (offset 0x49).</summary>
         public int AutoIncVal => pxFile.autoIncVal;
 
+        /// <summary>
+        /// True once <see cref="MarkOutOfDate"/> has been called (this
+        /// index's autoIncVal didn't match the parent .DB's at open time).
+        /// When set, any attempt to read/write via this index throws
+        /// <see cref="IndexOutOfDateException"/>.
+        /// </summary>
+        public bool IsOutOfDate { get; private set; }
+
+        /// <summary>
+        /// Flags this index as out of date. Called by <see cref="IndexManager"/>
+        /// right after opening, if this index's autoIncVal didn't match the
+        /// parent .DB's. Does not itself throw, so callers can inspect
+        /// <see cref="IsOutOfDate"/>/<c>ParadoxTableFile.IndexOutOfDate</c>
+        /// without an exception; actual index reads/writes still throw.
+        /// </summary>
+        internal void MarkOutOfDate() => IsOutOfDate = true;
+
+        private void ThrowIfOutOfDate()
+        {
+            if (IsOutOfDate)
+            {
+                throw new IndexOutOfDateException(FilePath,
+                    $"Index is out of date: '{FilePath}'. Consider TableRebuilder.Rebuild " +
+                    "to regenerate the index.");
+            }
+        }
+
 
         // ----------------------------------------------------------------
         // Constructor
@@ -100,6 +127,8 @@ namespace ParadoxReader
         /// <param name="recordCount">The block's current record count.</param>
         public void OnBlockChanged(object[] firstRowKeyValues, ushort dbBlockNumber, int recordCount)
         {
+            ThrowIfOutOfDate();
+
             System.Diagnostics.Debug.WriteLine(
                 $"[PrimaryIndexFile.OnBlockChanged] dbBlockNumber={dbBlockNumber}, recordCount={recordCount}");
 

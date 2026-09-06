@@ -34,6 +34,7 @@ namespace ParadoxReader
             : base(filePath)
         {
             this.table = table;
+            this.FilePath = filePath;
 
             this.primaryKeyFields = table.FieldTypes.Take(table.primaryKeyFields).ToArray();
             foreach (var f in this.primaryKeyFields)
@@ -41,7 +42,25 @@ namespace ParadoxReader
 
             entrySize     = keyDataSize + POINTER_SIZE;
             blockCapacity = this.maxTableSize * 0x400 - HEADER_SIZE;
+
+            // BDE/Pdxrbld considers an index out of date if its own
+            // autoIncVal (offset 0x49) doesn't match the parent .DB's after
+            // an AutoInc field is assigned. Flag it here (without throwing)
+            // so callers can check IsOutOfDate; Enumerate still throws if
+            // actually used.
+            if (table.autoIncVal != 0 && this.autoIncVal != table.autoIncVal)
+                IsOutOfDate = true;
         }
+
+        /// <summary>
+        /// True if this index's autoIncVal didn't match the parent .DB's at
+        /// open time. Attempting to <see cref="Enumerate"/> while this is
+        /// true throws <see cref="IndexOutOfDateException"/>.
+        /// </summary>
+        public bool IsOutOfDate { get; }
+
+        /// <summary>Full path to this .PX file.</summary>
+        public string FilePath { get; }
 
         // Test/diagnostic-only observability into the .PX B-tree depth, used
         // to confirm when the index has grown beyond a single (leaf-only)
@@ -51,6 +70,13 @@ namespace ParadoxReader
 
         public IEnumerable<ParadoxReader.ParadoxRecord> Enumerate(ParadoxCondition condition)
         {
+            if (IsOutOfDate)
+            {
+                throw new IndexOutOfDateException(this.FilePath,
+                    $"Index is out of date: '{this.FilePath}'. Consider TableRebuilder.Rebuild " +
+                    "to regenerate the index.");
+            }
+
             if (this.stream.Length <= this.headerSize) yield break;
 
             foreach (var rec in EnumerateNode(ReadBlock(this.pxRootBlockId), condition, this.pxLevelCount))

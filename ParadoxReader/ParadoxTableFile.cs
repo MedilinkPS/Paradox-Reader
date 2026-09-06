@@ -37,8 +37,21 @@ namespace ParadoxReader
         public ParadoxPrimaryKey PrimaryKeyIndex;
         private ParadoxBlobFile  BlobFile;
 
-        /// <summary>Full path to this table's .DB file.</summary>
+        /// <summary>FilePath to this table's .DB file.</summary>
         public string FilePath => filePath;
+
+        /// <summary>
+        /// True if any index file (.PX/.Xnn/.Xgn/.Ynn/.Ygn) associated with
+        /// this table was found to be out of date (its autoIncVal doesn't
+        /// match this table's) when the table was opened. Checking this
+        /// property never throws; attempting to actually read/write via an
+        /// out-of-date index (e.g. <see cref="PrimaryKeyIndex"/>.Enumerate,
+        /// a <see cref="SecondaryIndexHandle"/>.Enumerate, or any insert/
+        /// update/delete that touches the index) throws
+        /// <see cref="IndexOutOfDateException"/>. Consider
+        /// <see cref="TableRebuilder"/> to regenerate stale indexes.
+        /// </summary>
+        public bool IndexOutOfDate => indexManager.IndexOutOfDate || (PrimaryKeyIndex?.IsOutOfDate ?? false);
 
         private List<SecondaryIndexHandle> secondaryIndexHandles;
 
