@@ -432,6 +432,13 @@ namespace ParadoxDesktop
         {
             if (table == null || dataGridView.CurrentCell == null) return;
 
+            if (!editModeEnabled)
+            {
+                MessageBox.Show(this, "Enable Edit Mode (F9) before modifying a memo/blob field.", "Modify Memo/Blob",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
             int rowIndex = dataGridView.CurrentCell.RowIndex;
             int colIndex = dataGridView.CurrentCell.ColumnIndex;
             if (rowIndex < 0 || colIndex < 0 || rowIndex >= rowCursor.TotalRows) return;
