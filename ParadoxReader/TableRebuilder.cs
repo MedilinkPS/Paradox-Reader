@@ -154,7 +154,7 @@ namespace ParadoxReader
                 if (ext.Equals(".MB", StringComparison.OrdinalIgnoreCase))
                     CreateEmptyBlobSkeleton(src, dest);
                 else
-                    CreateEmptyTableSkeleton(src, dest);
+                    CreateEmptyTableSkeleton(src, dest, table.autoIncVal);
 
                 swapPairs.Add(new FilePair(src, dest));
             }
@@ -214,7 +214,18 @@ namespace ParadoxReader
         /// (now empty) data: RecordCount, block chain pointers, PX root
         /// block id/level count, change counters, and maxBlocks.
         /// </summary>
-        private static void CreateEmptyTableSkeleton(string srcPath, string destPath)
+        /// <param name="autoIncVal">
+        /// The parent .DB's current autoIncVal, forced into every skeleton's
+        /// header (overriding whatever value the source index file itself
+        /// had) so the freshly rebuilt .DB/.PX/secondary-index set all agree
+        /// from the outset. Without this, an index that was out of date
+        /// before the rebuild (the very case TableRebuilder exists to fix)
+        /// would carry its stale autoIncVal straight into the rebuilt
+        /// skeleton, making IndexManager/ParadoxPrimaryKey immediately flag
+        /// the brand-new index as out of date again and throw
+        /// <see cref="IndexOutOfDateException"/> on the first insert.
+        /// </param>
+        private static void CreateEmptyTableSkeleton(string srcPath, string destPath, int autoIncVal)
         {
             byte[] header = ReadHeaderBytes(srcPath);
 
@@ -225,6 +236,12 @@ namespace ParadoxReader
             ZeroRegion(header, ParadoxHeaderOffsets.ChangeCount1, 1);
             ZeroRegion(header, ParadoxHeaderOffsets.ChangeCount2, 1);
             ZeroRegion(header, ParadoxHeaderOffsets.MaxBlocks, 2);
+
+            if (header.Length >= ParadoxHeaderOffsets.AutoIncVal + 4)
+            {
+                byte[] autoIncBytes = BitConverter.GetBytes(autoIncVal);
+                Array.Copy(autoIncBytes, 0, header, ParadoxHeaderOffsets.AutoIncVal, 4);
+            }
 
             // changeCount4 (V4Hdr) only physically exists when the header
             // region is large enough to contain it.

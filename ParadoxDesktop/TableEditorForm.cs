@@ -58,6 +58,18 @@ namespace ParadoxDesktop
             if (table.IndexOutOfDate)
             {
                 statusLabel.Text = "Warning: one or more indexes are out of date. Use Table > Table Rebuild to fix.";
+
+                var response = MessageBox.Show(this,
+                    "One or more indexes for this table are out of date.\r\n\r\n" +
+                    "Would you like to rebuild the table now?\r\n" +
+                    "Otherwise, you'll only be able to read the rows.",
+                    "Index Out Of Date", MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+
+                if (response == DialogResult.Yes)
+                {
+                    RebuildTable();
+                    return;
+                }
             }
 
             SetupGrid();
