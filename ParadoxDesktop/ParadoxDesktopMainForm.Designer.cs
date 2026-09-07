@@ -32,6 +32,7 @@
             this.menuStrip = new System.Windows.Forms.MenuStrip();
             this.fileMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.newMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.newTableMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.newSqlFileMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.fileMenuSeparator2 = new System.Windows.Forms.ToolStripSeparator();
             this.openMenuItem = new System.Windows.Forms.ToolStripMenuItem();
@@ -56,6 +57,7 @@
             this.deleteRecordMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.tableMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.infoStructureMenuItem = new System.Windows.Forms.ToolStripMenuItem();
+            this.modifyStructureMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.tableRebuildMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.smsMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.runSmsMenuItem = new System.Windows.Forms.ToolStripMenuItem();
@@ -97,10 +99,18 @@
             // newMenuItem
             //
             this.newMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] {
+            this.newTableMenuItem,
             this.newSqlFileMenuItem});
             this.newMenuItem.Name = "newMenuItem";
             this.newMenuItem.Size = new System.Drawing.Size(180, 22);
             this.newMenuItem.Text = "&New";
+            //
+            // newTableMenuItem
+            //
+            this.newTableMenuItem.Name = "newTableMenuItem";
+            this.newTableMenuItem.Size = new System.Drawing.Size(180, 22);
+            this.newTableMenuItem.Text = "&Table...";
+            this.newTableMenuItem.Click += new System.EventHandler(this.newTableMenuItem_Click);
             //
             // newSqlFileMenuItem
             //
@@ -273,6 +283,7 @@
             //
             this.tableMenuItem.DropDownItems.AddRange(new System.Windows.Forms.ToolStripItem[] {
             this.infoStructureMenuItem,
+            this.modifyStructureMenuItem,
             this.tableRebuildMenuItem});
             this.tableMenuItem.Name = "tableMenuItem";
             this.tableMenuItem.Size = new System.Drawing.Size(50, 20);
@@ -284,6 +295,13 @@
             this.infoStructureMenuItem.Size = new System.Drawing.Size(180, 22);
             this.infoStructureMenuItem.Text = "&Info Structure...";
             this.infoStructureMenuItem.Click += new System.EventHandler(this.infoStructureMenuItem_Click);
+            //
+            // modifyStructureMenuItem
+            //
+            this.modifyStructureMenuItem.Name = "modifyStructureMenuItem";
+            this.modifyStructureMenuItem.Size = new System.Drawing.Size(180, 22);
+            this.modifyStructureMenuItem.Text = "&Modify Structure...";
+            this.modifyStructureMenuItem.Click += new System.EventHandler(this.modifyStructureMenuItem_Click);
             //
             // tableRebuildMenuItem
             //
@@ -350,6 +368,8 @@
         #endregion
 
         private System.Windows.Forms.MenuStrip menuStrip;
+        private System.Windows.Forms.ToolStripMenuItem newTableMenuItem;
+        private System.Windows.Forms.ToolStripMenuItem modifyStructureMenuItem;
         private System.Windows.Forms.ToolStripMenuItem fileMenuItem;
         private System.Windows.Forms.ToolStripMenuItem newMenuItem;
         private System.Windows.Forms.ToolStripMenuItem newSqlFileMenuItem;

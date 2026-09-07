@@ -68,6 +68,7 @@
     <Compile Include="ParadoxFile.FieldInfo.cs" />
     <Compile Include="ParadoxFile.V4Hdr.cs" />
     <Compile Include="ParadoxFileType.cs" />
+    <Compile Include="ParadoxHeaderBuilder.cs" />
     <Compile Include="ParadoxHeaderOffsets.cs" />
     <Compile Include="ParadoxPrimaryKey.cs" />
     <Compile Include="ParadoxTableFile.cs" />
@@ -94,7 +95,9 @@
     <Compile Include="Sql\SqlTokenizer.cs" />
     <Compile Include="Sql\SqlValueCoercion.cs" />
     <Compile Include="Sql\WhereTranslator.cs" />
+    <Compile Include="TableCreator.cs" />
     <Compile Include="TableRebuilder.cs" />
+    <Compile Include="TableSchemaDefinition.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="app.config" />

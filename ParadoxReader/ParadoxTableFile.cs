@@ -470,7 +470,7 @@ namespace ParadoxReader
         /// regardless of whether V4Header was parsed (older fileVersionIDs
         /// don't parse it, but the header region and byte still exist).
         /// </summary>
-        private void IncrementTableVersion()
+        private short IncrementTableVersion()
         {
             short newValue = (short)((V4Header?.changeCount4 ?? tableVersion) + 1);
             tableVersion = newValue;
@@ -479,6 +479,8 @@ namespace ParadoxReader
             stream.Position = ParadoxHeaderOffsets.ChangeCount4;
             using (var w = new BinaryWriter(new NonClosingStreamWrapper(stream), Encoding.Default))
                 w.Write(newValue);
+
+            return newValue;
         }
 
         /// <summary>
@@ -530,7 +532,8 @@ namespace ParadoxReader
 
             indexManager.SyncChangeCount(changeCount1, changeCount2);
 
-            IncrementTableVersion();
+            short newTableVersion = IncrementTableVersion();
+            indexManager.SyncTableVersion(newTableVersion);
 
             indexManager.IncrementWriteCounter();
         }

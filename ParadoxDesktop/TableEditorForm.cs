@@ -700,8 +700,45 @@ namespace ParadoxDesktop
         {
             if (table == null) return;
 
-            using (var infoForm = new TableInfoForm(table))
-                infoForm.ShowDialog(this);
+            using (var structureForm = new TableStructureForm(table))
+                structureForm.ShowDialog(this);
+        }
+
+        public void ModifyStructure()
+        {
+            if (table == null) return;
+
+            string dbFilePath = table.FilePath;
+
+            using (var structureForm = new TableStructureForm(TableStructureMode.Modify, table))
+            {
+                if (structureForm.ShowDialog(this) != DialogResult.OK)
+                    return;
+
+                var newSchema = structureForm.Schema;
+
+                try
+                {
+                    var result = TableRebuilder.RebuildWithSchema(table, newSchema);
+                    table = new ParadoxTableFile(dbFilePath);
+                    SetupGrid();
+
+                    MessageBox.Show(this,
+                        string.Format("Structure updated. {0} record(s) migrated across {1} file(s).",
+                            result.RecordsMigrated, result.RebuiltFiles.Count),
+                        "Modify Structure", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                }
+                catch (Exception ex)
+                {
+                    // TableRebuilder disposes the table even on failure paths that
+                    // already got past opening it; reopen so this editor window stays usable.
+                    table = new ParadoxTableFile(dbFilePath);
+                    SetupGrid();
+
+                    MessageBox.Show(this, "Modify structure failed:\r\n" + ex.Message, "Modify Structure",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
         }
 
         // ----------------------------------------------------------------

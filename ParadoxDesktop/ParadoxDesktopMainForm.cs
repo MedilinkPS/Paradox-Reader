@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Text;
 using System.Windows.Forms;
+using ParadoxReader;
 
 namespace ParadoxDesktop
 {
@@ -55,6 +56,40 @@ namespace ParadoxDesktop
             editor.Show();
         }
 
+
+        private void newTableMenuItem_Click(object sender, EventArgs e)
+        {
+            using (var structureForm = new TableStructureForm(TableStructureMode.Create, null))
+            {
+                if (structureForm.ShowDialog(this) != DialogResult.OK)
+                    return;
+
+                string dbFilePath;
+                using (var saveDialog = new SaveFileDialog
+                {
+                    Filter = "Paradox Tables (*.db)|*.db|All files (*.*)|*.*",
+                    DefaultExt = "db",
+                    FileName = structureForm.Schema.TableName
+                })
+                {
+                    if (saveDialog.ShowDialog(this) != DialogResult.OK)
+                        return;
+
+                    dbFilePath = saveDialog.FileName;
+                }
+
+                try
+                {
+                    TableCreator.CreateNew(dbFilePath, structureForm.Schema);
+                    OpenTable(dbFilePath);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show(this, "Failed to create table:\r\n" + ex.Message, "New Table",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                }
+            }
+        }
 
         private void openMenuItem_Click(object sender, EventArgs e)
         {
@@ -229,6 +264,19 @@ namespace ParadoxDesktop
             }
 
             editor.ShowInfoStructure();
+        }
+
+        private void modifyStructureMenuItem_Click(object sender, EventArgs e)
+        {
+            var editor = ActiveTableEditor;
+            if (editor == null)
+            {
+                MessageBox.Show(this, "No table is currently open.", "Modify Structure",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            editor.ModifyStructure();
         }
 
         private void tableRebuildMenuItem_Click(object sender, EventArgs e)

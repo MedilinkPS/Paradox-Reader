@@ -43,6 +43,12 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="IndexFieldsForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="IndexFieldsForm.Designer.cs">
+      <DependentUpon>IndexFieldsForm.cs</DependentUpon>
+    </Compile>
     <Compile Include="MemoEditorForm.cs">
       <SubType>Form</SubType>
     </Compile>
@@ -64,10 +70,10 @@
       <SubType>Form</SubType>
     </Compile>
     <Compile Include="TableEditorForm.Designer.cs" />
-    <Compile Include="TableInfoForm.cs">
+    <Compile Include="TableStructureForm.cs">
       <SubType>Form</SubType>
     </Compile>
-    <Compile Include="TableInfoForm.Designer.cs" />
+    <Compile Include="TableStructureForm.Designer.cs" />
     <Compile Include="UndoRedoManager.cs" />
     <EmbeddedResource Include="ParadoxDesktopMainForm.resx">
       <DependentUpon>ParadoxDesktopMainForm.cs</DependentUpon>

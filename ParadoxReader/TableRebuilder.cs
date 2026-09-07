@@ -109,6 +109,35 @@ namespace ParadoxReader
         {
             if (table == null) throw new ArgumentNullException(nameof(table));
 
+            return RebuildCore(table, tempTableName, newSchema: null);
+        }
+
+        /// <summary>
+        /// Regenerates <paramref name="table"/> under a new
+        /// <paramref name="newSchema"/> (Table > Modify Structure): builds a
+        /// fresh empty .DB/.PX/.Xnn skeleton set from
+        /// <paramref name="newSchema"/> via <see cref="ParadoxHeaderBuilder"/>
+        /// (rather than cloning the existing files' headers), remaps every
+        /// existing record's field values onto the new field layout by
+        /// matching field names (case-insensitively; fields absent from the
+        /// new schema are dropped, new fields default to null, and
+        /// differently-typed fields are converted on a best-effort basis,
+        /// falling back to null on failure), then re-inserts every record
+        /// into the fresh skeleton exactly like <see cref="Rebuild"/> does.
+        /// Takes ownership of <paramref name="table"/> and disposes it.
+        /// </summary>
+        public static TableRebuildResult RebuildWithSchema(ParadoxTableFile table, TableSchemaDefinition newSchema, string tempTableName = null)
+        {
+            if (table == null) throw new ArgumentNullException(nameof(table));
+            if (newSchema == null) throw new ArgumentNullException(nameof(newSchema));
+            if (newSchema.Fields == null || newSchema.Fields.Count == 0)
+                throw new ArgumentException("A table must have at least one field.", nameof(newSchema));
+
+            return RebuildCore(table, tempTableName, newSchema);
+        }
+
+        private static TableRebuildResult RebuildCore(ParadoxTableFile table, string tempTableName, TableSchemaDefinition newSchema)
+        {
             string dbFilePath = table.FilePath;
             string dir        = Path.GetDirectoryName(dbFilePath) ?? ".";
             string baseName   = Path.GetFileNameWithoutExtension(dbFilePath);
@@ -123,7 +152,8 @@ namespace ParadoxReader
             foreach (var rec in table.Enumerate())
                 records.Add(rec.DataValues);
 
-            var fieldTypes = table.FieldTypes;
+            var oldFieldTypes = table.FieldTypes;
+            var oldFieldNames = table.FieldNames;
 
             // ------------------------------------------------------------
             // 2. Locate every file belonging to this table (.DB, .PX,
@@ -141,22 +171,84 @@ namespace ParadoxReader
 
             // ------------------------------------------------------------
             // 3. Build an empty skeleton copy of every associated file
-            //    under the temp base name: same schema/header, but with
-            //    RecordCount/block-chain/index-tree/change-counter fields
-            //    reset to "empty".
+            //    under the temp base name. When newSchema is null (plain
+            //    compact-and-repair rebuild), skeletons clone the existing
+            //    files' headers with only the "empty data" fields reset.
+            //    When newSchema is supplied (Modify Structure), skeletons
+            //    are instead synthesized from scratch from newSchema via
+            //    ParadoxHeaderBuilder, since the field layout itself is
+            //    changing.
             // ------------------------------------------------------------
             var swapPairs = new List<FilePair>();
-            foreach (var src in sourceFiles)
+            string oldMbPath = sourceFiles.FirstOrDefault(f => Path.GetExtension(f).Equals(".MB", StringComparison.OrdinalIgnoreCase));
+
+            if (newSchema == null)
             {
-                string ext  = Path.GetExtension(src);
-                string dest = Path.Combine(dir, tempBaseName + ext);
+                foreach (var src in sourceFiles)
+                {
+                    string ext  = Path.GetExtension(src);
+                    string dest = Path.Combine(dir, tempBaseName + ext);
 
-                if (ext.Equals(".MB", StringComparison.OrdinalIgnoreCase))
-                    CreateEmptyBlobSkeleton(src, dest);
-                else
-                    CreateEmptyTableSkeleton(src, dest, table.autoIncVal);
+                    if (ext.Equals(".MB", StringComparison.OrdinalIgnoreCase))
+                        CreateEmptyBlobSkeleton(src, dest);
+                    else
+                        CreateEmptyTableSkeleton(src, dest, table.autoIncVal);
 
-                swapPairs.Add(new FilePair(src, dest));
+                    swapPairs.Add(new FilePair(src, dest));
+                }
+            }
+            else
+            {
+                string tempDbDest = Path.Combine(dir, tempBaseName + ".DB");
+                File.WriteAllBytes(tempDbDest, ParadoxHeaderBuilder.BuildDbHeader(newSchema));
+                swapPairs.Add(new FilePair(dbFilePath, tempDbDest));
+
+                string oldPxPath = sourceFiles.FirstOrDefault(f => Path.GetExtension(f).Equals(".PX", StringComparison.OrdinalIgnoreCase));
+                if (newSchema.PrimaryKeyFieldCount > 0)
+                {
+                    string tempPxDest = Path.Combine(dir, tempBaseName + ".PX");
+                    File.WriteAllBytes(tempPxDest, ParadoxHeaderBuilder.BuildPxHeader(newSchema));
+                    swapPairs.Add(new FilePair(oldPxPath ?? Path.ChangeExtension(dbFilePath, ".PX"), tempPxDest));
+                }
+                else if (oldPxPath != null)
+                {
+                    // Primary key removed entirely: the old .PX no longer applies.
+                    File.Delete(oldPxPath);
+                }
+
+                // Existing secondary index files (.Xnn/.Xgn/.Ynn/.Ygn) don't map
+                // cleanly onto a changed field layout, so they're simply removed;
+                // the caller is expected to have captured/re-specified the desired
+                // indexes in newSchema.Indexes, built fresh below.
+                foreach (var src in sourceFiles)
+                {
+                    string ext = Path.GetExtension(src).ToUpperInvariant();
+                    if (ext.Length >= 2 && (ext[1] == 'X' || ext[1] == 'Y') && !ext.Equals(".PX", StringComparison.OrdinalIgnoreCase))
+                        File.Delete(src);
+                }
+
+                int indexOrdinal = 0;
+                foreach (var index in newSchema.Indexes)
+                {
+                    string ext = ".X" + (indexOrdinal++).ToString().PadLeft(2, '0');
+                    string tempIndexDest = Path.Combine(dir, tempBaseName + ext);
+                    File.WriteAllBytes(tempIndexDest, ParadoxHeaderBuilder.BuildSecondaryIndexHeader(newSchema, index));
+                    swapPairs.Add(new FilePair(Path.ChangeExtension(dbFilePath, ext), tempIndexDest));
+                }
+
+                bool hasBlobField = newSchema.Fields.Any(f =>
+                    f.Type == ParadoxFieldTypes.MemoBLOb || f.Type == ParadoxFieldTypes.FmtMemoBLOb ||
+                    f.Type == ParadoxFieldTypes.BLOb || f.Type == ParadoxFieldTypes.OLE || f.Type == ParadoxFieldTypes.Graphic);
+                if (hasBlobField && oldMbPath != null)
+                {
+                    string tempMbDest = Path.Combine(dir, tempBaseName + ".MB");
+                    CreateEmptyBlobSkeleton(oldMbPath, tempMbDest);
+                    swapPairs.Add(new FilePair(oldMbPath, tempMbDest));
+                }
+                else if (!hasBlobField && oldMbPath != null)
+                {
+                    File.Delete(oldMbPath);
+                }
             }
 
             string tempDbPath = Path.Combine(dir, tempBaseName + ".DB");
@@ -171,10 +263,14 @@ namespace ParadoxReader
             int migrated = 0;
             using (var newTable = new ParadoxTableFile(tempDbPath))
             {
+                var newFieldTypes = newTable.FieldTypes;
                 foreach (var original in records)
                 {
-                    var values = (object[])original.Clone();
-                    ClearStaleBlobReferences(values, fieldTypes);
+                    object[] values = newSchema == null
+                        ? (object[])original.Clone()
+                        : RemapValues(original, oldFieldNames, oldFieldTypes, newSchema);
+
+                    ClearStaleBlobReferences(values, newFieldTypes);
                     newTable.InsertRecord(values);
                     migrated++;
                 }
@@ -201,6 +297,77 @@ namespace ParadoxReader
                 RecordsMigrated = migrated,
                 RebuiltFiles    = swapPairs.Select(p => p.Original).ToList()
             };
+        }
+
+        /// <summary>
+        /// Builds a new record's values for <paramref name="newSchema"/> from
+        /// an old record's values, matching fields by name
+        /// (case-insensitive). Fields with no matching old field become
+        /// null; fields whose old and new types differ are converted via
+        /// <see cref="Convert.ChangeType(object, Type)"/> where possible,
+        /// falling back to null if the value can't be converted.
+        /// </summary>
+        private static object[] RemapValues(
+            object[] oldValues, string[] oldFieldNames, ParadoxFile.FieldInfo[] oldFieldTypes, TableSchemaDefinition newSchema)
+        {
+            var newValues = new object[newSchema.Fields.Count];
+
+            for (int newIndex = 0; newIndex < newSchema.Fields.Count; newIndex++)
+            {
+                var newField = newSchema.Fields[newIndex];
+                int oldIndex = Array.FindIndex(oldFieldNames,
+                    n => string.Equals(n, newField.Name, StringComparison.OrdinalIgnoreCase));
+                if (oldIndex < 0 || oldIndex >= oldValues.Length)
+                    continue;
+
+                object oldValue = oldValues[oldIndex];
+                if (oldValue == null)
+                    continue;
+
+                if (oldFieldTypes[oldIndex].fType == newField.Type)
+                {
+                    newValues[newIndex] = oldValue;
+                    continue;
+                }
+
+                newValues[newIndex] = TryConvertValue(oldValue, newField.Type);
+            }
+
+            return newValues;
+        }
+
+        private static object TryConvertValue(object value, ParadoxFieldTypes targetType)
+        {
+            try
+            {
+                switch (targetType)
+                {
+                    case ParadoxFieldTypes.Alpha:
+                        return Convert.ToString(value);
+                    case ParadoxFieldTypes.Short:
+                        return Convert.ToInt16(value);
+                    case ParadoxFieldTypes.Long:
+                    case ParadoxFieldTypes.AutoInc:
+                        return Convert.ToInt32(value);
+                    case ParadoxFieldTypes.Currency:
+                    case ParadoxFieldTypes.Number:
+                        return Convert.ToDouble(value);
+                    case ParadoxFieldTypes.Logical:
+                        return Convert.ToBoolean(value);
+                    case ParadoxFieldTypes.Date:
+                    case ParadoxFieldTypes.Time:
+                    case ParadoxFieldTypes.Timestamp:
+                        return Convert.ToDateTime(value);
+                    default:
+                        // Memo/blob/bytes/BCD and other complex types aren't
+                        // safely convertible from an arbitrary source type.
+                        return null;
+                }
+            }
+            catch
+            {
+                return null;
+            }
         }
 
         // ----------------------------------------------------------------
