@@ -49,9 +49,10 @@ jobs:
         run: dotnet pack ParadoxReader/ParadoxReader.csproj -c Release --no-build -o nupkgs -p:PackageVersion=${{ env.PACKAGE_VERSION }}
 
       - name: Login to NuGet (Trusted Publishing)
+        id: nuget_login
         uses: NuGet/login@v1
         with:
           user: MedilinkPS
 
       - name: Push to NuGet.org
-        run: dotnet nuget push "nupkgs\*.nupkg" --api-key ${{ env.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
+        run: dotnet nuget push "nupkgs\*.nupkg" --api-key ${{ steps.nuget_login.outputs.NUGET_API_KEY }} --source https://api.nuget.org/v3/index.json --skip-duplicate
