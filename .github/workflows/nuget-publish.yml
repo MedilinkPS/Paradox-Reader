@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Package version override (e.g. 1.0.1). Leave blank to use the release tag."
-        required: false
+        description: "Package version to publish (e.g. 1.0.1). Required for manual runs."
+        required: true
 
 permissions:
   id-token: write # required for NuGet Trusted Publishing (OIDC)
