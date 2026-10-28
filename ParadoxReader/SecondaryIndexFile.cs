@@ -610,10 +610,14 @@ namespace ParadoxReader
         /// </summary>
         public void IncrementWriteCounter()
         {
+            // Legacy saturates the incremental Xgn write counter at 255 (observed);
+            // other index types wrap around as a normal byte counter.
             indexFile.stream.Position = ParadoxHeaderOffsets.WriteCounter;
             int current = indexFile.stream.ReadByte();
             if (current < 0) current = 0;
-            byte next = (byte)(current >= 255 ? 255 : current + 1);
+            byte next = indexFile.FileType == ParadoxFileType.XgnFileInc
+                ? (byte)Math.Min(current + 1, 255)
+                : unchecked((byte)(current + 1));
             indexFile.stream.Position = ParadoxHeaderOffsets.WriteCounter;
             indexFile.stream.WriteByte(next);
         }

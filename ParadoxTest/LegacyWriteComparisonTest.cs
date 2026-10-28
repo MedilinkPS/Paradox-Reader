@@ -14,8 +14,10 @@ namespace ParadoxTest
     /// </summary>
     internal static class LegacyWriteComparisonTest
     {
-        public static void Run(string databaseFolderPath = @"c:\temp\data", string tableName = "ClientVersionLog", int writeCount = 10)
+        public static void Run(string databaseFolderPath = null, string tableName = "ClientVersionLog", int writeCount = 10)
         {
+            databaseFolderPath = databaseFolderPath ?? LegacyWriteRows.LegacyWriteRowsDatabaseFolderPath;
+
             var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
             var tempRoot = Path.Combine(@"C:\temp", "paradoxwritetest_" + stamp);
             var backupFolder = Path.Combine(tempRoot, "backup");
@@ -61,6 +63,19 @@ namespace ParadoxTest
                     Console.WriteLine("[legacywritetest] ParadoxReader append FAILED: " + ex.Message);
                 }
                 BinaryComparisonTest.CopyTableSet(databaseFolderPath, tableName, tempRoot, readerName);
+
+                // Proof of index validity: the legacy tool must still open and append to the ParadoxReader output.
+                try
+                {
+                    LegacyWriteRows.WriteRows(BuildRows(1).Select(r => (tableName + ".db", r)).ToList());
+                    report.AppendLine("LEGACY OPEN/APPEND OF PARADOXREADER OUTPUT: OK");
+                    Console.WriteLine("[legacywritetest] legacy can open+append to ParadoxReader output: OK");
+                }
+                catch (Exception ex)
+                {
+                    report.AppendLine("LEGACY OPEN/APPEND OF PARADOXREADER OUTPUT: FAILED - " + ex.Message);
+                    Console.WriteLine("[legacywritetest] legacy can open+append to ParadoxReader output: FAILED - " + ex.Message);
+                }
                 Restore(backupFolder, databaseFolderPath, tableName);
 
                 // ---- 3. compare ----------------------------------------------------------
@@ -69,6 +84,8 @@ namespace ParadoxTest
                 bool legacyVsReader = BinaryComparisonTest.CompareTableSets(tempRoot, legacyName, tempRoot, readerName, "legacy", "paradoxreader", report);
 
                 var reportPath = Path.Combine(tempRoot, "differences_" + stamp + ".txt");
+                bool logicalSame = CompareLogicalRows(tempRoot, legacyName, readerName, report);
+                Console.WriteLine($"[legacywritetest] logical rows identical (legacy vs paradoxreader): {logicalSame}");
                 File.WriteAllText(reportPath, report.ToString());
                 Console.WriteLine($"[legacywritetest] legacy vs baseline identical: {baseVsLegacy}");
                 Console.WriteLine($"[legacywritetest] paradoxreader vs baseline identical: {baseVsReader}");
@@ -80,6 +97,45 @@ namespace ParadoxTest
                 // Always put the original back, even if something above threw.
                 Restore(backupFolder, databaseFolderPath, tableName);
                 Console.WriteLine("[legacywritetest] original table restored");
+            }
+        }
+
+        private static List<string> ReadAllRows(string folder, string tableName)
+        {
+            var rows = new List<string>();
+            using (var table = new ParadoxReader.ParadoxTableFile(Path.Combine(folder, tableName + ".DB")))
+            {
+                foreach (var rec in table.Enumerate())
+                    rows.Add(string.Join("|", rec.DataValues.Select(v => v == null ? "<null>" : v.ToString())));
+            }
+            return rows;
+        }
+
+        /// <summary>
+        /// Block packing may legitimately differ between writers, so compare the logical row sets
+        /// (order-insensitive) read back through ParadoxReader from each output.
+        /// </summary>
+        private static bool CompareLogicalRows(string folder, string legacyName, string readerName, StringBuilder report)
+        {
+            try
+            {
+                var a = ReadAllRows(folder, legacyName);
+                var b = ReadAllRows(folder, readerName);
+                var onlyA = a.GroupBy(x => x).ToDictionary(g => g.Key, g => g.Count());
+                foreach (var x in b)
+                {
+                    int c;
+                    if (onlyA.TryGetValue(x, out c)) onlyA[x] = c - 1; else onlyA[x] = -1;
+                }
+                var diffs = onlyA.Where(kv => kv.Value != 0).Take(20).ToList();
+                report.AppendLine($"LOGICAL ROWS: legacy={a.Count} paradoxreader={b.Count} differingDistinctRows={onlyA.Count(kv => kv.Value != 0)}");
+                foreach (var d in diffs) report.AppendLine($"  {d.Value:+#;-#}  {d.Key}");
+                return a.Count == b.Count && diffs.Count == 0;
+            }
+            catch (Exception ex)
+            {
+                report.AppendLine("LOGICAL ROWS compare FAILED: " + ex);
+                return false;
             }
         }
 

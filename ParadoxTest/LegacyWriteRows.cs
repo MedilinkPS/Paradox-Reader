@@ -14,7 +14,8 @@ namespace ParadoxTest
         /// git-ignored LegacyWriteRows.local.config (see LegacyWriteRows.local.config.example).
         /// Empty when unset/missing.
         /// </summary>
-        public static string WriteRowsExeFilePath => Configuration.GetWriteRowsExePath();
+        public static string LegacyWriteRowsExeFilePath => Configuration.GetLegacyWriteRowsExeFilePath();
+        public static string LegacyWriteRowsDatabaseFolderPath => Configuration.GetLegacyWriteRowsDatabaseFolderPath();
 
         /// <summary>
         /// This is what we feed in to the tool via json file. It can be an array of these values.
@@ -83,7 +84,7 @@ namespace ParadoxTest
             // Call the external tool to write the row
             var processInfo = new System.Diagnostics.ProcessStartInfo
             {
-                FileName = WriteRowsExeFilePath,
+                FileName = LegacyWriteRowsExeFilePath,
                 Arguments = $"-i \"{inputJsonFilePath}\" -o \"{outputJsonFilePath}\" -s", // -s = silent so it doesn't wait for input
                 RedirectStandardOutput = false,
                 UseShellExecute = true,

@@ -24,7 +24,9 @@ namespace ParadoxTest
         static void Main(string[] args)
         {
 
-            LegacyWriteComparisonTest.Run();
+            int legacyTestRowCount;
+            if (args == null || args.Length == 0 || !int.TryParse(args[0], out legacyTestRowCount)) legacyTestRowCount = 10;
+            LegacyWriteComparisonTest.Run(writeCount: legacyTestRowCount);
             return;
 
             // For now I just want to focus on the above test, ignore all tests below here (for now).

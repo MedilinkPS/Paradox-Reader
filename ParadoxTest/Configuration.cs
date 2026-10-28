@@ -89,10 +89,23 @@ namespace ParadoxTest
 
         // Machine-specific; WriteRows.exe. Read from the appSettings-style
         // file LegacyWriteRows.local.config (git-ignored - see
-        // LegacyWriteRows.local.config.example), key "WriteRowsExePath". It is loaded
-        // directly because app.config's appSettings can only reference one external file
+        // LegacyWriteRows.local.config.example), key "LegacyWriteRowsExeFilePath". It is loaded
+        // directly because app.config's appSettings can only reference one external file       
         // (already used by SqlRunner.local.config). Falls back to string.Empty.
-        internal static string GetWriteRowsExePath()
+        internal static string GetLegacyWriteRowsExeFilePath()
+        {
+            return GetLegacyWriteRowsSetting("LegacyWriteRowsExeFilePath");
+        }
+
+        // Machine-specific folder containing the Paradox tables the legacy
+        // WriteRows.exe writes to. Same source/logic as GetLegacyWriteRowsExeFilePath,
+        // key "DatabaseFolderPath". Falls back to string.Empty.
+        internal static string GetLegacyWriteRowsDatabaseFolderPath()
+        {
+            return GetLegacyWriteRowsSetting("LegacyWriteRowsDatabaseFolderPath");
+        }
+
+        private static string GetLegacyWriteRowsSetting(string key)
         {
             try
             {
@@ -101,7 +114,7 @@ namespace ParadoxTest
 
                 var doc = System.Xml.Linq.XDocument.Load(path);
                 return doc.Descendants("add")
-                    .Where(e => string.Equals((string)e.Attribute("key"), "WriteRowsExePath", StringComparison.OrdinalIgnoreCase))
+                    .Where(e => string.Equals((string)e.Attribute("key"), key, StringComparison.OrdinalIgnoreCase))
                     .Select(e => (string)e.Attribute("value"))
                     .FirstOrDefault() ?? string.Empty;
             }

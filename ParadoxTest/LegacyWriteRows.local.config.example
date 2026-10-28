@@ -5,5 +5,6 @@
   is git-ignored so each developer's path stays local and is never committed.
 -->
 <appSettings>
-	<add key="WriteRowsExePath" value="C:\Temp\ParadoxWriteRows.exe" />
+  <add key="LegacyWriteRowsExeFilePath" value="C:\Temp\ParadoxWriteRows.exe" />
+  <add key="LegacyWriteRowsDatabaseFolderPath" value="C:\Temp\data" />
 </appSettings>
