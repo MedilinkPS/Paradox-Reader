@@ -87,7 +87,31 @@ namespace ParadoxTest
             }
         }
 
-        // Machine-specific; the BDE "Pdxrbld" (Paradox table rebuild) utility,
+        // Machine-specific; WriteRows.exe. Read from the appSettings-style
+        // file LegacyWriteRows.local.config (git-ignored - see
+        // LegacyWriteRows.local.config.example), key "WriteRowsExePath". It is loaded
+        // directly because app.config's appSettings can only reference one external file
+        // (already used by SqlRunner.local.config). Falls back to string.Empty.
+        internal static string GetWriteRowsExePath()
+        {
+            try
+            {
+                var path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "LegacyWriteRows.local.config");
+                if (!File.Exists(path)) return string.Empty;
+
+                var doc = System.Xml.Linq.XDocument.Load(path);
+                return doc.Descendants("add")
+                    .Where(e => string.Equals((string)e.Attribute("key"), "WriteRowsExePath", StringComparison.OrdinalIgnoreCase))
+                    .Select(e => (string)e.Attribute("value"))
+                    .FirstOrDefault() ?? string.Empty;
+            }
+            catch
+            {
+                return string.Empty;
+            }
+        }
+
+        // Machine-specific; the BDE "Pdxrbld"
         // used as the known-good reference implementation to compare
         // ParadoxReader.TableRebuilder's output against. Configured via
         // appSettings key "PdxrbldExePath", normally set in

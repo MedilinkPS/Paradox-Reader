@@ -152,7 +152,7 @@ namespace ParadoxReader
         /// name, e.g. via Table > Restructure's index column checkboxes) use
         /// .Xnn/.Ynn naming where nn is the hex 1-based indexed-field
         /// position - confirmed against a real installed application's data
-        /// (C:\medilink32bnt\data\!transac.X06 etc). However, SQLRunner's
+        /// (C:\data\!transac.X06 etc). However, SQLRunner's
         /// CREATE INDEX (equivalent to what TableCreator/TableRebuilder
         /// synthesize from a TableIndexDefinition - always a *named* index)
         /// produces .XGn/.YGn regardless of field count - confirmed by

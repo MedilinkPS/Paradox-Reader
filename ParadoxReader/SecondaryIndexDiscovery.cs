@@ -21,7 +21,7 @@ namespace ParadoxReader
             // Non-incremental secondary indexes: .X00 - .XFF (hex 1-based
             // field number of the first indexed field - confirmed
             // empirically against a real BDE-created table, e.g.
-            // C:\medilink32bnt\data\!transac.X06/.X07/.X08/.X0B/.X0F/.X17).
+            // C:\data\!transac.X06/.X07/.X08/.X0B/.X0F/.X17).
             TryScanPattern(dir, name, "X",  hex: true,  padWidth: 2, from: 0, to: 0xFF, allFields, primaryKeyFieldCount, result);
 
             // Incremental (composite) secondary indexes: .XG0 - .XG9

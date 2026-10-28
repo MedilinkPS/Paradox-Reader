@@ -41,6 +41,9 @@
     <None Condition="Exists('SqlRunner.local.config')" Update="SqlRunner.local.config">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Condition="Exists('LegacyWriteRows.local.config')" Update="LegacyWriteRows.local.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <None Include="bin\Debug\checkhdr.ps1" />
     <None Include="bin\Debug\dumpmb.ps1" />
     <None Update="data\testtab.DB">

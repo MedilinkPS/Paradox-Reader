@@ -1,5 +1,8 @@
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.IO;
+using System.Linq;
 
 namespace ParadoxTest
 {
@@ -17,6 +20,73 @@ namespace ParadoxTest
     {
         static void Main(string[] args)
         {
+
+            // New test I've hand made to verify writes are not having index out of date errors. I think it might be specifically multi field indices that are causing the problem.
+
+            var databaseFolderPath = "c:\\temp\\data";
+            var clientVersionLogWithoutExt = "ClientVersionLog";
+            var clientVersionLogWithExt = $"{clientVersionLogWithoutExt}.db";
+            var clientVersionLogWithWildcardExt = $"{clientVersionLogWithoutExt}.*";
+            var clientVersionLogWildcardPath = Path.Combine(databaseFolderPath, clientVersionLogWithWildcardExt);
+            var clientVersionLogPath = Path.Combine(databaseFolderPath, clientVersionLogWithExt);
+
+            // TODO: make a backup copy of the clientVersionLogDatabase (i.e. use wildcard as there may be multiple files), we will restore it at the end of the test. This is important because we are going to be writing to it and we don't want to corrupt the original.
+
+            try
+            {
+
+
+                var writeCount = 1;
+                var clientVersionLogsToWrite = new List<Dictionary<string, object>>();
+
+                for (int i = 0; i < writeCount; i++)
+                {
+                    // TODO: randomise these a bit. Make sure you leave Id as zero as it is an autoinc field and will be set by the database. Make sure you leave DateTime as DateTime.Now so that it is always different.
+                    var logEntry = new Dictionary<string, object>();
+                    logEntry.Add("Id", 0);
+                    logEntry.Add("MajorVersion", 1);
+                    logEntry.Add("MinorVersion", 2);
+                    logEntry.Add("VersionName", "TestVersion");
+                    logEntry.Add("VersionBuildDate", new DateTime(2024, 1, 15));
+                    logEntry.Add("ComputerName", "TESTPC");
+                    logEntry.Add("UserName", "testuser");
+                    logEntry.Add("ServerBaseDir", "C:\\Test");
+                    logEntry.Add("ClientId", 12345);
+                    logEntry.Add("OperatingSystem", "Windows 11");
+                    logEntry.Add("DateTime", DateTime.Now);
+                    clientVersionLogsToWrite.Add(logEntry);
+                }
+
+                LegacyWriteRows.WriteRows(clientVersionLogsToWrite.Select(logEntry => (clientVersionLogWithExt, logEntry)).ToList());
+
+                // TODO: now copy the legacy appended version of the clientVersionLogWildcardPath to temp and give it an approprate postfix i.e. legacy_yyyyMMdd_HHmmss.db so that we can compare it
+                // TODO: restore the original clientVersionLogDatabase from the backup copy we made at the start of the test. This is important because we don't want to corrupt the original database.
+
+                using (var table = new ParadoxReader.ParadoxTableFile(clientVersionLogPath))
+                {
+                    foreach(var columnValues in clientVersionLogsToWrite)
+                    {
+                        table.AppendRecord(columnValues.Values.ToArray());
+                    }
+                }
+
+                // TODO: now copy the paradoxreader appended version of the clientVersionLogWildcardPath to temp and give it an approprate postfix i.e. paradoxreader_yyyyMMdd_HHmmss.db so that we can compare it
+                // Restore the original clientVersionLogDatabase from the backup copy we made at the start of the test. This is important because we don't want to corrupt the original database.
+
+                // TODO: write a binary comparison of the two databases, and if they are different, write a report of the differences to a text file in temp with an appropriate postfix i.e. differences_yyyyMMdd_HHmmss.txt so that we can investigate the differences.
+
+            }
+            finally
+            {
+                // Restore the original clientVersionLogDatabase from the backup copy we made at the start of the test. This is important because we don't want to corrupt the original database.
+                // In theory we will have already done this, but we do it again anyway as a backup in case something went wrong and we didn't get to the restore step.
+            }
+
+            // End my new test.
+
+
+
+
 
             if (args.Length > 0 && args[0] == "libupdatetest")
             {
