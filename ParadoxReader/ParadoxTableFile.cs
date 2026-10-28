@@ -324,6 +324,10 @@ namespace ParadoxReader
                 AssignAutoIncValues(fieldValues);
 
                 byte[]   recordBytes = SerializeRecord(fieldValues);
+
+                if (RequiresSortedInsert())
+                    return AppendSorted(fieldValues, recordBytes);
+
                 DbBlock  block       = FindOrAllocateBlockForInsert();
                 ushort   recIdx      = (ushort)block.RecordCount;
 
@@ -341,6 +345,119 @@ namespace ParadoxReader
 
                 return new ParadoxRecord(block.BlockNumber, recIdx, fieldValues);
             }
+        }
+
+        /// <summary>
+        /// Paradox keeps rows of a keyed table physically ordered by primary key.
+        /// AutoInc keys are monotonically increasing, so plain appending is already ordered.
+        /// </summary>
+        private bool RequiresSortedInsert()
+        {
+            if (primaryKeyFields <= 0 || fileBlocks == 0 || indexManager.PrimaryIndexFile == null)
+                return false;
+            for (int i = 0; i < primaryKeyFields; i++)
+                if (FieldTypes[i].fType != ParadoxFieldTypes.AutoInc)
+                    return true;
+            return false;
+        }
+
+        private byte[] KeyOfValues(object[] values)
+        {
+            var keyFields = new ParadoxFile.FieldInfo[primaryKeyFields];
+            var keyValues = new object[primaryKeyFields];
+            for (int i = 0; i < primaryKeyFields; i++)
+            {
+                keyFields[i] = FieldTypes[i];
+                keyValues[i] = values[i];
+            }
+            return KeySerializer.Serialize(keyValues, keyFields);
+        }
+
+        private int CompareKeyOf(object[] a, object[] b)
+        {
+            var keyFields = new ParadoxFile.FieldInfo[primaryKeyFields];
+            for (int i = 0; i < primaryKeyFields; i++) keyFields[i] = FieldTypes[i];
+            return KeySerializer.Compare(KeyOfValues(a), KeyOfValues(b), keyFields);
+        }
+
+        private ParadoxReader.ParadoxRecord AppendSorted(object[] fieldValues, byte[] recordBytes)
+        {
+            // Find the last block (in chain order) whose first key <= new key; default first block.
+            DbBlock target = blockManager.ReadBlock((ushort)(firstBlock - 1));
+            DbBlock cur    = target;
+            while (true)
+            {
+                object[] first = ParadoxRecord.DeserializeRecordBytes(cur.GetRecordBytes(0), this);
+                if (CompareKeyOf(first, fieldValues) <= 0) target = cur;
+                else break;
+                if (cur.NextBlock == 0) break;
+                cur = blockManager.ReadBlock((ushort)(cur.NextBlock - 1));
+            }
+
+            // Collect existing records + the new one in key order.
+            int count = target.RecordCount;
+            var recs = new System.Collections.Generic.List<byte[]>();
+            int pos = -1;
+            for (int i = 0; i < count; i++)
+            {
+                byte[] rb = target.GetRecordBytes(i);
+                if (pos < 0)
+                {
+                    int c = CompareKeyOf(fieldValues, ParadoxRecord.DeserializeRecordBytes(rb, this));
+                    if (c == 0)
+                        throw new InvalidOperationException("Key violation: a record with the same primary key already exists.");
+                    if (c < 0) { pos = i; recs.Add(recordBytes); }
+                }
+                recs.Add(rb);
+            }
+            if (pos < 0) { pos = recs.Count; recs.Add(recordBytes); }
+
+            DbBlock second = null;
+            int keep = recs.Count;
+            if (recs.Count > target.MaxRecords)
+            {
+                second = blockManager.AllocateBlock();
+                keep = (recs.Count + 1) / 2;
+
+                second.NextBlock = target.NextBlock;
+                target.NextBlock = (ushort)(second.BlockNumber + 1);
+                if (lastBlock == (ushort)(target.BlockNumber + 1))
+                {
+                    lastBlock = (ushort)(second.BlockNumber + 1);
+                    nextBlock = lastBlock;
+                }
+                fileBlocks = (ushort)(fileBlocks + 1);
+                WriteBlockHeadersToFileHeader();
+            }
+
+            for (int i = 0; i < target.MaxRecords; i++)
+                target.SetRecordBytes(i, i < keep ? recs[i] : new byte[RecordSize]);
+            target.RecordCount = keep;
+            blockManager.WriteBlock(target);
+
+            ushort recBlock = target.BlockNumber;
+            ushort recIdx   = (ushort)pos;
+
+            if (second != null)
+            {
+                int n2 = recs.Count - keep;
+                for (int i = 0; i < second.MaxRecords; i++)
+                    second.SetRecordBytes(i, i < n2 ? recs[keep + i] : new byte[RecordSize]);
+                second.RecordCount = n2;
+                blockManager.WriteBlock(second);
+                if (pos >= keep) { recBlock = second.BlockNumber; recIdx = (ushort)(pos - keep); }
+            }
+
+            RecordCount++;
+            WriteRecordCountToHeader();
+
+            NotifyBlockChanged(target);
+            if (second != null) NotifyBlockChanged(second);
+            indexManager.OnRowAppended(fieldValues);
+            indexManager.SyncRecordCount(RecordCount);
+            IncrementChangeCount();
+
+            return new ParadoxRecord(recBlock, recIdx, fieldValues);
         }
 
         /// <summary>

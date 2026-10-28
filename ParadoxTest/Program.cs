@@ -25,6 +25,17 @@ namespace ParadoxTest
         {
 
             int legacyTestRowCount;
+            if (args != null && args.Length > 0 && args[0] == "randomtables")
+            {
+                int rtTables = 12, rtWrites = 260, rtSeed = 0;
+                if (args.Length > 1) int.TryParse(args[1], out rtTables);
+                if (args.Length > 2) int.TryParse(args[2], out rtWrites);
+                if (args.Length > 3) int.TryParse(args[3], out rtSeed);
+                int rtProbe = 1;
+                if (args.Length > 5) int.TryParse(args[5], out rtProbe);
+                RandomTableWriteTest.Run(rtTables, rtWrites, rtSeed, null, args.Length > 4 && args[4] != "-" ? args[4] : null, rtProbe);
+                return;
+            }
             if (args == null || args.Length == 0 || !int.TryParse(args[0], out legacyTestRowCount)) legacyTestRowCount = 10;
             LegacyWriteComparisonTest.Run(writeCount: legacyTestRowCount);
             return;

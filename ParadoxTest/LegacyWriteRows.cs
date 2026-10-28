@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 using static ParadoxTest.LegacyWriteRows;
 
@@ -80,40 +81,128 @@ namespace ParadoxTest
             }
 
             var inputJson = System.Text.Json.JsonSerializer.Serialize(inputs);
-            File.WriteAllText(inputJsonFilePath, inputJson);
-            // Call the external tool to write the row
-            var processInfo = new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = LegacyWriteRowsExeFilePath,
-                Arguments = $"-i \"{inputJsonFilePath}\" -o \"{outputJsonFilePath}\" -s", // -s = silent so it doesn't wait for input
-                RedirectStandardOutput = false,
-                UseShellExecute = true,
-                CreateNoWindow = true
-            };
-            using (var process = System.Diagnostics.Process.Start(processInfo))
-            {
-                process.WaitForExit();
-            }
-            if (!File.Exists(outputJsonFilePath))
-            {
-                throw new Exception("Output file was not created by the external tool.");
-            }
-            var outputJson = File.ReadAllText(outputJsonFilePath);
 
-            var output = System.Text.Json.JsonSerializer.Deserialize<List<WriteRowOutput>>(
-                outputJson,
-                new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            foreach (var item in output)
+            // The legacy tool must never run in parallel (or back-to-back too quickly): wait for any
+            // running instance, pause between calls, and retry when it fails to start / emits no output.
+            lock (WriteRowsLock)
             {
-                if (item.Status?.Equals("Success", StringComparison.OrdinalIgnoreCase) != true)
+                string lastError = null;
+                string lastOutputJson = null;
+                for (int attempt = 1; attempt <= MaxAttempts; attempt++)
                 {
-                    throw new Exception($"Failed to write row: {item.ErrorMessage}");
+                    WaitForNoWriteRowsProcess();
+                    File.Delete(outputJsonFilePath);
+                    File.WriteAllText(inputJsonFilePath, inputJson);
+                    bool timedOut = false;
+                    // Call the external tool to write the row
+                    var processInfo = new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = LegacyWriteRowsExeFilePath,
+                        Arguments = $"-i \"{inputJsonFilePath}\" -o \"{outputJsonFilePath}\" -s", // -s = silent so it doesn't wait for input
+                        RedirectStandardOutput = false,
+                        UseShellExecute = true,
+                        CreateNoWindow = true
+                    };
+                    using (var process = System.Diagnostics.Process.Start(processInfo))
+                    {
+                        if (!process.WaitForExit(ProcessTimeoutMs))
+                        {
+                            timedOut = true;
+                            try { process.Kill(); } catch { }
+                        }
+                    }
+                    System.Threading.Thread.Sleep(InterWriteDelayMs);
+
+                    if (!File.Exists(outputJsonFilePath))
+                    {
+                        lastError = timedOut
+                            ? $"Output file was not created by the external tool (timed out after {ProcessTimeoutMs / 1000}s)."
+                            : "Output file was not created by the external tool.";
+                        continue;
+                    }
+
+                    lastOutputJson = File.ReadAllText(outputJsonFilePath);
+                    List<WriteRowOutput> output;
+                    try
+                    {
+                        output = System.Text.Json.JsonSerializer.Deserialize<List<WriteRowOutput>>(
+                            lastOutputJson,
+                            new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                    }
+                    catch (Exception ex)
+                    {
+                        lastError = "Could not parse tool output: " + ex.Message;
+                        continue;
+                    }
+
+                    var failed = output.FirstOrDefault(i => i.Status?.Equals("Success", StringComparison.OrdinalIgnoreCase) != true);
+                    if (failed == null)
+                    {
+                        // TODO: consider outputing the output to a log file or returning it to the caller for further processing if needed. We would need to keep the values in the same order as the input so that the caller can match them up. For now we just return true if all writes were successful.
+                        return true;
+                    }
+                    lastError = $"Failed to write row: {failed.ErrorMessage}";
                 }
+
+                LogFailure(inputs, inputJson, lastError, lastOutputJson);
+                throw new Exception(lastError + $" (failed {MaxAttempts} attempts; input logged to {FailedInputsJsonFilePath})");
             }
+        }
 
-            // TODO: consider outputing the output to a log file or returning it to the caller for further processing if needed. We would need to keep the values in the same order as the input so that the caller can match them up. For now we just return true if all writes were successful.
+        private static readonly object WriteRowsLock = new object();
 
-            return true;
+        /// <summary>Total attempts (first try + retries) before a write is treated as failed.</summary>
+        public static int MaxAttempts = 3;
+
+        /// <summary>The tool normally finishes within ~1s; kill it if it is still running after this.</summary>
+        public static int ProcessTimeoutMs = 10000;
+
+        /// <summary>Pause after every legacy tool run so consecutive runs never overlap.</summary>
+        public static int InterWriteDelayMs = 1000;
+
+        /// <summary>Accumulated inputs of writes that failed all attempts. A JSON array that can be fed straight back to the tool with -i.</summary>
+        public static string FailedInputsJsonFilePath = @"C:\temp\LegacyWriteRows_failed_inputs.json";
+
+        /// <summary>Human-readable details (timestamp, error, tool output) for the entries in <see cref="FailedInputsJsonFilePath"/>.</summary>
+        public static string FailedDetailsLogFilePath = @"C:\temp\LegacyWriteRows_failed_details.log";
+
+        private static void LogFailure(List<WriteRowInput> inputs, string inputJson, string error, string outputJson)
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(FailedInputsJsonFilePath));
+
+                var all = new List<WriteRowInput>();
+                if (File.Exists(FailedInputsJsonFilePath))
+                {
+                    var existing = System.Text.Json.JsonSerializer.Deserialize<List<WriteRowInput>>(File.ReadAllText(FailedInputsJsonFilePath));
+                    if (existing != null) all.AddRange(existing);
+                }
+                all.AddRange(inputs);
+                File.WriteAllText(FailedInputsJsonFilePath,
+                    System.Text.Json.JsonSerializer.Serialize(all, new System.Text.Json.JsonSerializerOptions { WriteIndented = true }));
+
+                File.AppendAllText(FailedDetailsLogFilePath,
+                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {error}{Environment.NewLine}  input:  {inputJson}{Environment.NewLine}  output: {outputJson ?? "<none>"}{Environment.NewLine}{Environment.NewLine}");
+            }
+            catch
+            {
+                // Logging must never mask the original failure.
+            }
+        }
+
+        private static void WaitForNoWriteRowsProcess()
+        {
+            var name = Path.GetFileNameWithoutExtension(LegacyWriteRowsExeFilePath);
+            var deadline = DateTime.UtcNow.AddSeconds(90);
+            while (DateTime.UtcNow < deadline)
+            {
+                var running = System.Diagnostics.Process.GetProcessesByName(name);
+                bool any = running.Length > 0;
+                foreach (var p in running) p.Dispose();
+                if (!any) return;
+                System.Threading.Thread.Sleep(500);
+            }
         }
 
     }

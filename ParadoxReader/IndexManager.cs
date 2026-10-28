@@ -15,7 +15,7 @@ namespace ParadoxReader
         // Fields
         // ----------------------------------------------------------------
 
-        private readonly PrimaryIndexFile         PrimaryIndexFile;
+        internal readonly PrimaryIndexFile        PrimaryIndexFile;
         private readonly List<SecondaryIndexFile> secondaryIndexes = new List<SecondaryIndexFile>();
         private readonly ParadoxFile.FieldInfo[]          allFields;
         private readonly int                  primaryKeyFieldCount;
