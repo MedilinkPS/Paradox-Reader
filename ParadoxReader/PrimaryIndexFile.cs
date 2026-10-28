@@ -210,7 +210,9 @@ namespace ParadoxReader
         /// </summary>
         public void SyncAutoIncVal(int autoIncVal)
         {
-            pxFile.autoIncVal = autoIncVal;
+            // Observed against the legacy writer: the .PX counts writes (+1 each)
+            // rather than mirroring the table's autoIncVal.
+            pxFile.autoIncVal = pxFile.autoIncVal + 1;
             pxFile.stream.Position = ParadoxHeaderOffsets.AutoIncVal;
             using (var w = new BinaryWriter(new NonClosingStreamWrapper(pxFile.stream), Encoding.Default))
                 w.Write(pxFile.autoIncVal);

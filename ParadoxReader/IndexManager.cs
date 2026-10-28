@@ -155,6 +155,18 @@ namespace ParadoxReader
         /// a write. Must be called after every insert/update/delete, once the .DB
         /// header's change count has been incremented.
         /// </summary>
+        public void SyncRecordCount(int tableRecordCount)
+        {
+            foreach (var idx in secondaryIndexes)
+                idx.SyncRecordCount(tableRecordCount);
+        }
+
+        public void OnRowAppended(object[] rowFieldValues)
+        {
+            foreach (var idx in secondaryIndexes)
+                idx.OnRowAppended(rowFieldValues);
+        }
+
         public void SyncChangeCount(byte changeCount1, byte changeCount2)
         {
             PrimaryIndexFile?.SyncChangeCount(changeCount1, changeCount2);

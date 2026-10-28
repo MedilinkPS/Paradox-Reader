@@ -296,6 +296,8 @@ namespace ParadoxReader
                 WriteRecordCountToHeader();
 
                 NotifyBlockChanged(block);
+                indexManager.OnRowAppended(fieldValues);
+                indexManager.SyncRecordCount(RecordCount);
                 IncrementChangeCount();
 
                 return new ParadoxRecord(block.BlockNumber, recIdx, fieldValues);
@@ -333,6 +335,8 @@ namespace ParadoxReader
                 WriteRecordCountToHeader();
 
                 NotifyBlockChanged(block);
+                indexManager.OnRowAppended(fieldValues);
+                indexManager.SyncRecordCount(RecordCount);
                 IncrementChangeCount();
 
                 return new ParadoxRecord(block.BlockNumber, recIdx, fieldValues);

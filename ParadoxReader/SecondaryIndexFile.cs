@@ -193,6 +193,11 @@ namespace ParadoxReader
         {
             ThrowIfOutOfDate();
 
+            // Ygn files are a single maintained aggregate entry (min key + total
+            // table row count), not per-block entries; see SyncRecordCount/OnRowAppended.
+            if (IsAggregateIndex && indexFile.stream.Length > indexFile.headerSize && indexFile.RecordCount > 0)
+                return;
+
             System.Diagnostics.Debug.WriteLine(
                 $"[SecondaryIndexFile.OnBlockChanged] blockNumber={blockNumber}, recordCount={recordCount}");
 
@@ -501,7 +506,66 @@ namespace ParadoxReader
         /// </summary>
         public void SyncChangeCount(byte changeCount1, byte changeCount2)
         {
-            // Intentionally no-op; see summary above.
+            // Observed against the legacy writer: incremental Xgn files bump the
+            // bytes at 0x2D and 0x2F by one per write (Ygn/PX files do not).
+            if (indexFile.FileType != ParadoxFileType.XgnFileInc) return;
+            foreach (int offset in new[] { 0x2D, 0x2F })
+            {
+                indexFile.stream.Position = offset;
+                int cur = indexFile.stream.ReadByte();
+                if (cur < 0) cur = 0;
+                indexFile.stream.Position = offset;
+                indexFile.stream.WriteByte((byte)(cur + 1));
+            }
+        }
+
+        private bool IsAggregateIndex => indexFile.FileType == ParadoxFileType.YgnFile;
+
+        /// <summary>
+        /// Keeps row-count based header/entry values in step with the parent table's
+        /// total record count: narrow-pointer (Xgn) indexes mirror it in their header,
+        /// Ygn aggregate indexes store it in their single entry's pointer.
+        /// </summary>
+        public void SyncRecordCount(int tableRecordCount)
+        {
+            if (IsAggregateIndex)
+            {
+                var root = GetAggregateBlock();
+                if (root == null) return;
+                if (root.Entries[0].RecordCount != (ushort)tableRecordCount)
+                {
+                    root.Entries[0].RecordCount = (ushort)tableRecordCount;
+                    WriteBlock(root);
+                }
+            }
+            else if (pointerSize < 6 && indexFile.RecordCount != tableRecordCount)
+            {
+                UpdateRecordCount(tableRecordCount);
+            }
+        }
+
+        /// <summary>
+        /// Ygn aggregate indexes hold the minimum key seen; replace it when the
+        /// newly appended row sorts lower.
+        /// </summary>
+        public void OnRowAppended(object[] rowAllFieldValues)
+        {
+            if (!IsAggregateIndex) return;
+            var root = GetAggregateBlock();
+            if (root == null) return;
+            byte[] key = KeySerializer.Serialize(ExtractIndexValues(rowAllFieldValues), indexedFields);
+            if (CompareKeys(key, root.Entries[0].KeyData) < 0)
+            {
+                root.Entries[0].KeyData = key;
+                WriteBlock(root);
+            }
+        }
+
+        private PxBlock GetAggregateBlock()
+        {
+            if (indexFile.stream.Length <= indexFile.headerSize || indexFile.RecordCount <= 0) return null;
+            var root = ReadBlock(indexFile.pxRootBlockId);
+            return root.Entries.Count == 0 ? null : root;
         }
 
         /// <summary>
@@ -512,6 +576,10 @@ namespace ParadoxReader
         /// </summary>
         public void SyncAutoIncVal(int autoIncVal)
         {
+            // Observed against the legacy writer: Ygn files count writes (+1 each),
+            // Xgn files mirror the table's autoIncVal.
+            if (IsAggregateIndex)
+                autoIncVal = indexFile.autoIncVal + 1;
             indexFile.autoIncVal = autoIncVal;
             indexFile.stream.Position = ParadoxHeaderOffsets.AutoIncVal;
             using (var w = new BinaryWriter(new NonClosingStreamWrapper(indexFile.stream), Encoding.Default))
@@ -545,7 +613,7 @@ namespace ParadoxReader
             indexFile.stream.Position = ParadoxHeaderOffsets.WriteCounter;
             int current = indexFile.stream.ReadByte();
             if (current < 0) current = 0;
-            byte next = (byte)(current + 1);
+            byte next = (byte)(current >= 255 ? 255 : current + 1);
             indexFile.stream.Position = ParadoxHeaderOffsets.WriteCounter;
             indexFile.stream.WriteByte(next);
         }
