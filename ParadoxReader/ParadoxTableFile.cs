@@ -311,6 +311,14 @@ namespace ParadoxReader
         /// </summary>
         private void CheckUniqueIndexes(object[] fieldValues)
         {
+            if (primaryKeyFields > 0)
+            {
+                // Primary keys are always unique; Alpha comparison is case-sensitive (unverified against BDE).
+                var pk = new int[primaryKeyFields];
+                for (int i = 0; i < pk.Length; i++) pk[i] = i;
+                CheckUniqueKey(filePath, pk, true, fieldValues);
+            }
+
             foreach (var idx in indexManager.SecondaryIndexes)
             {
                 if (!idx.IsUnique) continue;
@@ -319,7 +327,16 @@ namespace ParadoxReader
                 var fi = idx.FieldIndices;
                 int n = fi.Length;
                 while (n > 1 && fi[n - 1] < primaryKeyFields) n--;
+                var used = new int[n];
+                Array.Copy(fi, used, n);
+                CheckUniqueKey(idx.FilePath, used, idx.IsCaseSensitive, fieldValues);
+            }
+        }
 
+        private void CheckUniqueKey(string keyFilePath, int[] fi, bool caseSensitive, object[] fieldValues)
+        {
+            {
+                int n = fi.Length;
                 bool skip = false;
                 var keyVals = new object[n];
                 for (int i = 0; i < n; i++)
@@ -327,11 +344,11 @@ namespace ParadoxReader
                     keyVals[i] = fi[i] < fieldValues.Length ? fieldValues[fi[i]] : null;
                     if (keyVals[i] == null || keyVals[i] is DBNull || FieldTypes[fi[i]].fType == ParadoxFieldTypes.AutoInc) skip = true;
                 }
-                if (skip) continue;
+                if (skip) return;
 
                 var keyStrings = new string[n];
                 for (int i = 0; i < n; i++)
-                    keyStrings[i] = KeyToString(keyVals[i], idx.IsCaseSensitive);
+                    keyStrings[i] = KeyToString(keyVals[i], caseSensitive);
 
                 foreach (var rec in Enumerate())
                 {
@@ -340,12 +357,12 @@ namespace ParadoxReader
                     {
                         var existing = rec.DataValues[fi[i]];
                         if (existing == null || existing is DBNull ||
-                            KeyToString(existing, idx.IsCaseSensitive) != keyStrings[i])
+                            KeyToString(existing, caseSensitive) != keyStrings[i])
                             same = false;
                     }
                     if (same)
-                        throw new KeyViolationException(idx.FilePath,
-                            $"Key violation: unique index '{System.IO.Path.GetFileName(idx.FilePath)}' already contains key '{string.Join(", ", keyStrings)}'.");
+                        throw new KeyViolationException(keyFilePath,
+                            $"Key violation: unique index '{System.IO.Path.GetFileName(keyFilePath)}' already contains key '{string.Join(", ", keyStrings)}'.");
                 }
             }
         }
