@@ -297,7 +297,7 @@ namespace ParadoxReader
                 WriteRecordCountToHeader();
 
                 NotifyBlockChanged(block);
-                indexManager.OnRowAppended(fieldValues);
+                indexManager.OnRowAppended(fieldValues, block.BlockNumber);
                 indexManager.SyncRecordCount(RecordCount);
                 IncrementChangeCount();
 
@@ -306,7 +306,7 @@ namespace ParadoxReader
         }
 
         /// <summary>
-        /// Throws <see cref="KeyViolationException"/> if <paramref name="fieldValues"/> would duplicate an existing
+        /// Throws
         /// key in any unique secondary index (honouring each index's case sensitivity). Must run before any bytes are written.
         /// </summary>
         private void CheckUniqueIndexes(object[] fieldValues)
@@ -409,7 +409,7 @@ namespace ParadoxReader
                 WriteRecordCountToHeader();
 
                 NotifyBlockChanged(block);
-                indexManager.OnRowAppended(fieldValues);
+                indexManager.OnRowAppended(fieldValues, block.BlockNumber);
                 indexManager.SyncRecordCount(RecordCount);
                 IncrementChangeCount();
 
@@ -418,7 +418,7 @@ namespace ParadoxReader
         }
 
         /// <summary>
-        /// Paradox keeps rows of a keyed table physically ordered by primary key.
+        /// Paradox keeps
         /// AutoInc keys are monotonically increasing, so plain appending is already ordered.
         /// </summary>
         private bool RequiresSortedInsert()
@@ -523,7 +523,7 @@ namespace ParadoxReader
 
             NotifyBlockChanged(target);
             if (second != null) NotifyBlockChanged(second);
-            indexManager.OnRowAppended(fieldValues);
+            indexManager.OnRowAppended(fieldValues, recBlock);
             indexManager.SyncRecordCount(RecordCount);
             IncrementChangeCount();
 

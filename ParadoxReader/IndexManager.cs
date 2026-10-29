@@ -161,10 +161,11 @@ namespace ParadoxReader
                 idx.SyncRecordCount(tableRecordCount);
         }
 
-        public void OnRowAppended(object[] rowFieldValues)
+        public void OnRowAppended(object[] rowFieldValues, ushort blockNumber)
         {
+            // Xgn row hints store the .DB block 1-based.
             foreach (var idx in secondaryIndexes)
-                idx.OnRowAppended(rowFieldValues);
+                idx.OnRowAppended(rowFieldValues, (ushort)(blockNumber + 1));
         }
 
         public void SyncChangeCount(byte changeCount1, byte changeCount2)
@@ -245,6 +246,19 @@ namespace ParadoxReader
                     System.Diagnostics.Debug.WriteLine(
                         $"[IndexManager] Failed to open {info.FilePath}: {ex.Message}");
                 }
+            }
+
+            // Pair each flat .XGn with its .YGn companion (same ordinal).
+            foreach (var xg in secondaryIndexes)
+            {
+                if (!xg.IsFlatTable) continue;
+                string ext = Path.GetExtension(xg.FilePath);
+                if (ext.Length < 4) continue;
+                string yPath = Path.ChangeExtension(xg.FilePath, ".Y" + ext.Substring(2));
+                var yg = secondaryIndexes.Find(s => string.Equals(s.FilePath, yPath, StringComparison.OrdinalIgnoreCase));
+                if (yg == null) continue;
+                xg.Companion = yg;
+                yg.ManagedByCompanion = true;
             }
         }
 

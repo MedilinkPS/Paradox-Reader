@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -213,6 +213,11 @@ namespace ParadoxReader
             if (IsAggregateIndex && indexFile.stream.Length > indexFile.headerSize && indexFile.RecordCount > 0)
                 return;
 
+            // BDE Xgn files hold one row per parent record (maintained in OnRowAppended),
+            // and their Ygn companion is rebuilt from the Xgn block chain.
+            if (IsFlatTable || ManagedByCompanion)
+                return;
+
             System.Diagnostics.Debug.WriteLine(
                 $"[SecondaryIndexFile.OnBlockChanged] blockNumber={blockNumber}, recordCount={recordCount}");
 
@@ -410,6 +415,19 @@ namespace ParadoxReader
                         bool possible = condition.IsIndexPossible(indexRec, nextRec);
                         if (!possible) continue;
 
+                        // BDE Xgn files are flat sorted tables with one row per parent
+                        // record (header field list: indexed fields, primary key, then
+                        // a Short block hint). The hint is not maintained by Paradox, so
+                        // resolve the row through its primary key via the .PX index.
+                        if (pointerSize < 6 && table is ParadoxTableFile parent && parent.PrimaryKeyIndex != null
+                            && parent.primaryKeyFields > 0 && fieldIndices.Length >= parent.primaryKeyFields)
+                        {
+                            if (!condition.IsIndexPossible(indexRec, indexRec)) continue;
+                            foreach (var rec in LookupByPrimaryKey(parent, indexRec))
+                                if (condition.IsDataOk(rec)) yield return rec;
+                            continue;
+                        }
+
                         // Leaf entries store the .DB block number 1-based, but
                         // ParadoxFile.GetBlock indexes blocks 0-based, so convert here.
                         //
@@ -539,6 +557,24 @@ namespace ParadoxReader
         /// table rows. Values are ordered per this index's composed key
         /// (see <see cref="FieldIndices"/>), not the parent table's layout.
         /// </summary>
+        private IEnumerable<ParadoxReader.ParadoxRecord> LookupByPrimaryKey(ParadoxTableFile parent, ParadoxReader.ParadoxRecord indexRec)
+        {
+            int pkCount = parent.primaryKeyFields;
+            int pkStart = fieldIndices.Length - pkCount;
+            var pkValues = new object[pkCount];
+            for (int k = 0; k < pkCount; k++)
+                pkValues[k] = indexRec.DataValues[pkStart + k];
+
+            var pkCondition = new ParadoxCondition.Compare(ParadoxCompareOperator.Equal, pkValues[0], 0, 0);
+            foreach (var rec in parent.PrimaryKeyIndex.Enumerate(pkCondition))
+            {
+                bool match = true;
+                for (int k = 0; k < pkCount && match; k++)
+                    match = ParadoxCondition.Compare.CompareValues(rec.DataValues[k], pkValues[k]) == 0;
+                if (match) yield return rec;
+            }
+        }
+
         private static ParadoxFile.DataBlock NextChainedBlock(ParadoxFile table, ParadoxFile.DataBlock block)
         {
             int next = block.nextBlock - 1;
@@ -581,6 +617,7 @@ namespace ParadoxReader
         /// </summary>
         public void SyncRecordCount(int tableRecordCount)
         {
+            if (ManagedByCompanion) return;
             if (IsAggregateIndex)
             {
                 var root = GetAggregateBlock();
@@ -601,8 +638,16 @@ namespace ParadoxReader
         /// Ygn aggregate indexes hold the minimum key seen; replace it when the
         /// newly appended row sorts lower.
         /// </summary>
-        public void OnRowAppended(object[] rowAllFieldValues)
+        public void OnRowAppended(object[] rowAllFieldValues, ushort dbBlockNumber)
         {
+            if (IsFlatTable)
+            {
+                ThrowIfOutOfDate();
+                FlatInsert(rowAllFieldValues, dbBlockNumber);
+                Companion?.RebuildFromFlat(this);
+                return;
+            }
+            if (ManagedByCompanion) return;
             if (!IsAggregateIndex) return;
             var root = GetAggregateBlock();
             if (root == null) return;
@@ -612,6 +657,196 @@ namespace ParadoxReader
                 root.Entries[0].KeyData = key;
                 WriteBlock(root);
             }
+        }
+
+        // ----------------------------------------------------------------
+        // BDE flat Xgn table + Ygn companion
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// True for BDE-format Xgn files: a DB-like flat sorted table with one row per
+        /// parent record (indexed fields + primary key + 2-byte DB block hint), chained
+        /// via next/prev block pointers. Never a B-tree (root/levels stay 0).
+        /// </summary>
+        internal bool IsFlatTable =>
+            pointerSize < 6 && (indexFile.FileType == ParadoxFileType.XgnFileNonInc || indexFile.FileType == ParadoxFileType.XgnFileInc);
+
+        /// <summary>The Ygn companion of a flat Xgn (one entry per Xgn block).</summary>
+        internal SecondaryIndexFile Companion { get; set; }
+
+        /// <summary>True for a Ygn whose contents are derived from its Xgn's block chain.</summary>
+        internal bool ManagedByCompanion { get; set; }
+
+        private class FlatBlock
+        {
+            public ushort Number, Next, Prev;
+            public readonly List<byte[]> Rows = new List<byte[]>();
+        }
+
+        private int FlatBlockSize => indexFile.maxTableSize * 0x400;
+
+        private FlatBlock ReadFlat(ushort number)
+        {
+            var b = new FlatBlock { Number = number };
+            indexFile.stream.Position = indexFile.headerSize + (long)(number - 1) * FlatBlockSize;
+            using (var r = new BinaryReader(new NonClosingStreamWrapper(indexFile.stream), Encoding.Default))
+            {
+                b.Next = r.ReadUInt16();
+                b.Prev = r.ReadUInt16();
+                short used = r.ReadInt16();
+                int count = used < 0 ? 0 : Math.Min(used / entrySize + 1, (FlatBlockSize - HEADER_SIZE) / entrySize);
+                for (int i = 0; i < count; i++) b.Rows.Add(r.ReadBytes(entrySize));
+            }
+            return b;
+        }
+
+        private void WriteFlat(FlatBlock b)
+        {
+            indexFile.stream.Position = indexFile.headerSize + (long)(b.Number - 1) * FlatBlockSize;
+            using (var w = new BinaryWriter(new NonClosingStreamWrapper(indexFile.stream), Encoding.Default))
+            {
+                w.Write(b.Next);
+                w.Write(b.Prev);
+                w.Write((short)((b.Rows.Count - 1) * entrySize));
+                foreach (var row in b.Rows) w.Write(row);
+                int rem = FlatBlockSize - HEADER_SIZE - b.Rows.Count * entrySize;
+                if (rem > 0) w.Write(new byte[rem]);
+            }
+        }
+
+        private IEnumerable<FlatBlock> FlatChain()
+        {
+            if (indexFile.RecordCount <= 0 || indexFile.fileBlocks == 0) yield break;
+            var visited = new HashSet<ushort>();
+            ushort n = indexFile.firstBlock == 0 ? (ushort)1 : indexFile.firstBlock;
+            while (n != 0 && n <= indexFile.fileBlocks && visited.Add(n))
+            {
+                var b = ReadFlat(n);
+                yield return b;
+                n = b.Next;
+            }
+        }
+
+        private byte[] FlatKey(byte[] row)
+        {
+            var k = new byte[keyDataSize];
+            Array.Copy(row, k, keyDataSize);
+            return k;
+        }
+
+        private void FlatInsert(object[] values, ushort dbBlockNumber)
+        {
+            byte[] key = KeySerializer.Serialize(ExtractIndexValues(values), indexedFields);
+            byte[] row = new byte[entrySize];
+            Array.Copy(key, row, Math.Min(key.Length, keyDataSize));
+            ushort hint = (ushort)(dbBlockNumber ^ 0x8000);
+            row[keyDataSize]     = (byte)(hint >> 8);
+            row[keyDataSize + 1] = (byte)hint;
+
+            int capacity = (FlatBlockSize - HEADER_SIZE) / entrySize;
+
+            if (indexFile.RecordCount <= 0 || indexFile.fileBlocks == 0)
+            {
+                if (indexFile.stream.Length < indexFile.headerSize + FlatBlockSize)
+                    indexFile.stream.SetLength(indexFile.headerSize + FlatBlockSize);
+                var first = new FlatBlock { Number = 1 };
+                first.Rows.Add(row);
+                WriteFlat(first);
+                WriteFlatHeader(1, 1, 1);
+                return;
+            }
+
+            // Last block (chain order) whose first key <= new key; default first block.
+            FlatBlock target = null;
+            foreach (var b in FlatChain())
+            {
+                if (target == null || (b.Rows.Count > 0 && CompareKeys(FlatKey(b.Rows[0]), key) <= 0)) target = b;
+                else break;
+            }
+            if (target == null) return;
+
+            int pos = target.Rows.Count;
+            for (int i = 0; i < target.Rows.Count; i++)
+                if (CompareKeys(FlatKey(target.Rows[i]), key) > 0) { pos = i; break; }
+            target.Rows.Insert(pos, row);
+
+            ushort fileBlocks = indexFile.fileBlocks;
+            ushort lastBlock  = indexFile.lastBlock;
+            if (target.Rows.Count > capacity)
+            {
+                // Same as BDE: the new block is appended physically but linked right after the target.
+                fileBlocks++;
+                indexFile.stream.SetLength(Math.Max(indexFile.stream.Length, indexFile.headerSize + (long)fileBlocks * FlatBlockSize));
+                var nb = new FlatBlock { Number = fileBlocks, Next = target.Next, Prev = target.Number };
+                int keep = (target.Rows.Count + 1) / 2;
+                nb.Rows.AddRange(target.Rows.GetRange(keep, target.Rows.Count - keep));
+                target.Rows.RemoveRange(keep, target.Rows.Count - keep);
+                if (target.Next != 0)
+                {
+                    var after = ReadFlat(target.Next);
+                    after.Prev = nb.Number;
+                    WriteFlat(after);
+                }
+                else lastBlock = nb.Number;
+                target.Next = nb.Number;
+                WriteFlat(nb);
+            }
+            WriteFlat(target);
+            WriteFlatHeader(fileBlocks, indexFile.firstBlock == 0 ? (ushort)1 : indexFile.firstBlock, lastBlock);
+        }
+
+        private void WriteFlatHeader(ushort fileBlocks, ushort firstBlock, ushort lastBlock)
+        {
+            indexFile.nextBlock  = fileBlocks;
+            indexFile.fileBlocks = fileBlocks;
+            indexFile.firstBlock = firstBlock;
+            indexFile.lastBlock  = lastBlock;
+            indexFile.stream.Position = ParadoxHeaderOffsets.BlockChain;
+            using (var w = new BinaryWriter(new NonClosingStreamWrapper(indexFile.stream), Encoding.Default))
+            {
+                w.Write(fileBlocks);
+                w.Write(fileBlocks);
+                w.Write(firstBlock);
+                w.Write(lastBlock);
+            }
+            if (fileBlocks > indexFile.maxBlocks)
+            {
+                indexFile.maxBlocks = fileBlocks;
+                indexFile.stream.Position = ParadoxHeaderOffsets.MaxBlocks;
+                using (var w = new BinaryWriter(new NonClosingStreamWrapper(indexFile.stream), Encoding.Default))
+                    w.Write(fileBlocks);
+            }
+        }
+
+        /// <summary>
+        /// Regenerates this Ygn from its Xgn's block chain: one entry per Xgn block,
+        /// in chain order, holding the block's first key, its block number and row count
+        /// (matches BDE output). Only single-block Ygn files are supported.
+        /// </summary>
+        internal void RebuildFromFlat(SecondaryIndexFile xg)
+        {
+            if (xg.keyDataSize != keyDataSize || pointerSize < 6) return;
+
+            var entries = new List<PxEntry>();
+            foreach (var b in xg.FlatChain())
+                if (b.Rows.Count > 0)
+                    entries.Add(new PxEntry(xg.FlatKey(b.Rows[0]), b.Number, (ushort)b.Rows.Count));
+
+            if (entries.Count == 0 || entries.Count > blockCapacity / entrySize)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[SecondaryIndexFile.RebuildFromFlat] Skipped '{FilePath}': {entries.Count} entries not supported in a single block.");
+                return;
+            }
+
+            var root = indexFile.stream.Length > indexFile.headerSize
+                ? new PxBlock { BlockNumber = RootBlockNumber, Capacity = blockCapacity }
+                : AllocateBlock();
+            root.Entries.AddRange(entries);
+            WriteBlock(root);
+            UpdateRootBlockId(root.BlockNumber);
+            UpdateLevelCount(1);
+            UpdateRecordCount(entries.Count);
         }
 
         private PxBlock GetAggregateBlock()
