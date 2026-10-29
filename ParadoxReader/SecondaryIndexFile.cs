@@ -321,7 +321,7 @@ namespace ParadoxReader
             if (indexFile.stream.Length <= indexFile.headerSize) yield break;
             if (indexFile.RecordCount <= 0) yield break;
 
-            foreach (var rec in EnumerateNode(ReadBlock(indexFile.pxRootBlockId), condition, table, null))
+            foreach (var rec in EnumerateNode(ReadBlock(RootBlockNumber), condition, table, null))
                 yield return rec;
         }
 
@@ -371,6 +371,7 @@ namespace ParadoxReader
 
             PxBlock cur = node;
             var visited = new HashSet<ushort>();
+            var scannedDbBlocks = new HashSet<ushort>();
             while (cur != null)
             {
                 if (!visited.Add(cur.BlockNumber))
@@ -423,11 +424,19 @@ namespace ParadoxReader
                         if (dbBlockNumber < 0 || dbBlockNumber >= table.fileBlocks)
                             continue;
 
+                        // Genuine BDE (verified against a Paradox 7 insert into ARDRG)
+                        // does not rewrite leaf pointers when rows land in a later
+                        // chained .DB block, so the pointer is only a starting
+                        // block: also scan its chain successor.
                         var block = table.GetBlock((ushort)dbBlockNumber);
-                        for (int r = 0; r < block.RecordCount; r++)
+                        foreach (var candidate in new[] { block, NextChainedBlock(table, block) })
                         {
-                            var rec = block[r];
-                            if (condition.IsDataOk(rec)) yield return rec;
+                            if (candidate == null || !scannedDbBlocks.Add(candidate.blockNumber)) continue;
+                            for (int r = 0; r < candidate.RecordCount; r++)
+                            {
+                                var rec = candidate[r];
+                                if (condition.IsDataOk(rec)) yield return rec;
+                            }
                         }
                     }
                 }
@@ -459,6 +468,9 @@ namespace ParadoxReader
             }
         }
 
+        /// <summary>Root block number normalised to this file's block base (BDE XG files store root 0 yet number blocks from 1).</summary>
+        private ushort RootBlockNumber => indexFile.pxRootBlockId < blockBase ? blockBase : indexFile.pxRootBlockId;
+
         /// <summary>
         /// True if <paramref name="blockNumber"/> refers to a block that
         /// physically exists within this index file itself (as opposed to
@@ -487,6 +499,25 @@ namespace ParadoxReader
                 return typeDefaultBase;
 
             int blockSize = indexFile.maxTableSize * 0x400;
+
+            // The root pointer alone can't tell the bases apart when it is 0 (real BDE XG files: root=0 but
+            // 1-based chain 1->2->3). The first physical block's forward-chain pointer is decisive: it
+            // names physical block #1 as either 1 (0-based) or 2 (1-based).
+            if (indexFile.stream.Length >= indexFile.headerSize + blockSize * 2L)
+            {
+                var hdr = new byte[2];
+                long savedPos = indexFile.stream.Position;
+                indexFile.stream.Position = indexFile.headerSize;
+                int got = indexFile.stream.Read(hdr, 0, 2);
+                indexFile.stream.Position = savedPos;
+                if (got == 2)
+                {
+                    int next = hdr[0] | (hdr[1] << 8);
+                    if (next == 2) return 1;
+                    if (next == 1) return 0;
+                }
+            }
+
             bool IsValidUnder(ushort candidateBase)
             {
                 long pos = indexFile.headerSize + (long)(indexFile.pxRootBlockId - candidateBase) * blockSize;
@@ -508,6 +539,13 @@ namespace ParadoxReader
         /// table rows. Values are ordered per this index's composed key
         /// (see <see cref="FieldIndices"/>), not the parent table's layout.
         /// </summary>
+        private static ParadoxFile.DataBlock NextChainedBlock(ParadoxFile table, ParadoxFile.DataBlock block)
+        {
+            int next = block.nextBlock - 1;
+            if (block.nextBlock == 0 || next >= table.fileBlocks) return null;
+            return table.GetBlock((ushort)next);
+        }
+
         private ParadoxReader.ParadoxRecord BuildSyntheticRecord(PxEntry entry)
         {
             var values = KeySerializer.Deserialize(entry.KeyData, indexedFields);
@@ -579,7 +617,7 @@ namespace ParadoxReader
         private PxBlock GetAggregateBlock()
         {
             if (indexFile.stream.Length <= indexFile.headerSize || indexFile.RecordCount <= 0) return null;
-            var root = ReadBlock(indexFile.pxRootBlockId);
+            var root = ReadBlock(RootBlockNumber);
             return root.Entries.Count == 0 ? null : root;
         }
 
@@ -667,7 +705,7 @@ namespace ParadoxReader
         {
             if (indexFile.stream.Length <= indexFile.headerSize) return new FoundEntry { Block = null, Index = -1 };
             if (indexFile.RecordCount <= 0) return new FoundEntry { Block = null, Index = -1 };
-            return FindEntryForBlockRecursive(ReadBlock(indexFile.pxRootBlockId), blockNumber);
+            return FindEntryForBlockRecursive(ReadBlock(RootBlockNumber), blockNumber);
         }
 
         /// <summary>
@@ -685,6 +723,11 @@ namespace ParadoxReader
         /// </summary>
         private bool IsLeafNode(PxBlock node)
         {
+            // BDE-format XG files (2-byte pointers) hold only the leaf level as a block chain; the tree lives in
+            // the YG file. Their DB block numbers can collide with in-file block numbers, so never treat them as branches.
+            if (pointerSize < 6 && (indexFile.FileType == ParadoxFileType.XgnFileNonInc || indexFile.FileType == ParadoxFileType.XgnFileInc))
+                return true;
+
             return node.Entries.Count == 0 || (pointerSize >= 6
                 ? node.Entries[0].RecordCount > 0
                 : !IsValidIndexBlockNumber(node.Entries[0].BlockNumber));
@@ -774,11 +817,11 @@ namespace ParadoxReader
                 $"[SecondaryIndexFile.BTreeInsert] rootBlock={indexFile.pxRootBlockId}, " +
                 $"key={BitConverter.ToString(entry.KeyData)}");
 
-            var root = ReadBlock(indexFile.pxRootBlockId);
+            var root = ReadBlock(RootBlockNumber);
             if (root.IsFull(entrySize))
             {
                 var newRoot = AllocateBlock();
-                newRoot.LeftChildBlockNumber = indexFile.pxRootBlockId;
+                newRoot.LeftChildBlockNumber = RootBlockNumber;
                 SplitChild(newRoot, 0, root);
                 // Update the level count BEFORE recursing into InsertNonFull so
                 // IsLeafAtDepth (which relies on indexFile.pxLevelCount to know
@@ -885,7 +928,7 @@ namespace ParadoxReader
             if (indexFile.stream.Length <= indexFile.headerSize)
                 return; // Nothing to delete from an empty tree.
 
-            var root = ReadBlock(indexFile.pxRootBlockId);
+            var root = ReadBlock(RootBlockNumber);
             DeleteFromNode(root, keyData);
             if (root.Entries.Count == 0 && !IsLeafNode(root))
             {

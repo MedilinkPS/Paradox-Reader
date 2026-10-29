@@ -63,3 +63,6 @@ bin/
 obj/
 *.LCK
 /.github/upgrades
+ParadoxTest/IdapiReferences/idapi.h
+ParadoxTest/IdapiReferences/idapi32.dll
+ParadoxTest/IdapiReferences/idapi32.lib

@@ -25,6 +25,13 @@ namespace ParadoxTest
         {
 
             int legacyTestRowCount;
+            if (args != null && args.Length > 0 && args[0] == "writeindextest")
+            {
+                int witRounds = 5;
+                if (args.Length > 1) int.TryParse(args[1], out witRounds);
+                IndexWriteLookupTest.Run(witRounds, args.Length > 2 ? args[2] : "ClientVersionLog");
+                return;
+            }
             if (args != null && args.Length > 0 && args[0] == "dupkeytest")
             {
                 Environment.ExitCode = DuplicateKeyTest.Run();
