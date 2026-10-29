@@ -316,7 +316,7 @@ namespace ParadoxReader
                 // Primary keys are always unique; Alpha comparison is case-sensitive (unverified against BDE).
                 var pk = new int[primaryKeyFields];
                 for (int i = 0; i < pk.Length; i++) pk[i] = i;
-                CheckUniqueKey(filePath, pk, true, fieldValues, cond => PrimaryKeyIndex?.Enumerate(cond));
+                CheckUniqueKey(filePath, pk, true, fieldValues);
             }
 
             foreach (var idx in indexManager.SecondaryIndexes)
@@ -328,16 +328,11 @@ namespace ParadoxReader
                 int n = Math.Min(idx.IndexedFieldCount, fi.Length);
                 var used = new int[n];
                 Array.Copy(fi, used, n);
-                var index = idx;
-                // Case-insensitive string keys are not ordered ordinally in the B-tree, so only prune with the index when safe.
-                bool lookupSafe = index.IsCaseSensitive || FieldTypes[used[0]].fType != ParadoxFieldTypes.Alpha;
-                CheckUniqueKey(idx.FilePath, used, idx.IsCaseSensitive, fieldValues,
-                    lookupSafe ? (Func<ParadoxCondition, IEnumerable<ParadoxRecord>>)(cond => index.Enumerate(cond, this)) : null);
+                CheckUniqueKey(idx.FilePath, used, idx.IsCaseSensitive, fieldValues);
             }
         }
 
-        private void CheckUniqueKey(string keyFilePath, int[] fi, bool caseSensitive, object[] fieldValues,
-            Func<ParadoxCondition, IEnumerable<ParadoxRecord>> lookup)
+        private void CheckUniqueKey(string keyFilePath, int[] fi, bool caseSensitive, object[] fieldValues)
         {
             {
                 int n = fi.Length;
@@ -354,23 +349,7 @@ namespace ParadoxReader
                 for (int i = 0; i < n; i++)
                     keyStrings[i] = KeyToString(keyVals[i], caseSensitive);
 
-                IEnumerable<ParadoxRecord> candidates = null;
-                if (lookup != null && keyVals[0] != null)
-                {
-                    try
-                    {
-                        // Materialize now so an out-of-date/corrupt index fails here and falls back to a full scan.
-                        var cond = new ParadoxCondition.Compare(ParadoxCompareOperator.Equal,
-                            keyVals[0] is string ks ? ks.TrimEnd('\0', ' ') : keyVals[0], fi[0], 0);
-                        var list = new List<ParadoxRecord>();
-                        var e = lookup(cond);
-                        if (e != null) { list.AddRange(e); candidates = list; }
-                    }
-                    catch (Exception) { candidates = null; }
-                }
-                if (candidates == null) candidates = Enumerate();
-
-                foreach (var rec in candidates)
+                foreach (var rec in Enumerate())
                 {
                     bool same = true;
                     for (int i = 0; i < n && same; i++)

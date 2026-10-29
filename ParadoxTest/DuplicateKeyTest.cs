@@ -58,6 +58,7 @@ namespace ParadoxTest
             Expect(db, "non-unique duplicate allowed", new object[] { 7, "Q7", "Q7", "y", 3, "n" }, false);
 
             try { Directory.Delete(dir, true); } catch { }
+            ManyRows();
             Console.WriteLine(failures == 0 ? "[dupkeytest] ALL PASSED" : $"[dupkeytest] {failures} FAILED");
             return failures;
         }
@@ -79,6 +80,53 @@ namespace ParadoxTest
             Check(name, ok);
         }
 
+		private static void ManyRows()
+		{
+			string dir = Path.Combine(Path.GetTempPath(), "dupkeymany_" + Guid.NewGuid().ToString("N"));
+			Directory.CreateDirectory(dir);
+			string db = Path.Combine(dir, "MANY.DB");
+			var schema = new TableSchemaDefinition
+			{
+				Fields =
+				{
+					new TableFieldDefinition("ID", ParadoxFieldTypes.Long, 4, true),
+					new TableFieldDefinition("UCI", ParadoxFieldTypes.Alpha, 20, false),
+					new TableFieldDefinition("UCS", ParadoxFieldTypes.Alpha, 20, false),
+				},
+				Indexes =
+				{
+					new TableIndexDefinition(new[] { 1 }) { IsUnique = true, IsCaseSensitive = false },
+					new TableIndexDefinition(new[] { 2 }) { IsUnique = true, IsCaseSensitive = true },
+				}
+			};
+			TableCreator.CreateNew(db, schema);
+			var rng = new Random(5);
+			var names = new List<string>();
+			using (var t = new ParadoxTableFile(db))
+			{
+				for (int i = 1; i <= 600; i++)
+				{
+					string n = "Name" + rng.Next(0, 1000000).ToString("D7") + (char)('a' + rng.Next(26));
+					if (names.Contains(n, StringComparer.OrdinalIgnoreCase)) continue;
+					names.Add(n);
+					t.AppendRecord(new object[] { i, n, n });
+				}
+			}
+			int missedCi = 0, missedCs = 0, falsePos = 0, next = 100000;
+			using (var t = new ParadoxTableFile(db))
+			{
+				foreach (var n in names.OrderBy(_ => rng.Next()).Take(150))
+				{
+					try { t.AppendRecord(new object[] { next++, n.ToUpperInvariant(), "zz" + next }); missedCi++; } catch (KeyViolationException) { }
+					try { t.AppendRecord(new object[] { next++, "zz" + next, n }); missedCs++; } catch (KeyViolationException) { }
+					try { t.AppendRecord(new object[] { next++, "fresh" + next, "fresh" + next }); } catch (KeyViolationException) { falsePos++; }
+				}
+			}
+			Check($"many rows: CI duplicates missed={missedCi}", missedCi == 0);
+			Check($"many rows: CS duplicates missed={missedCs}", missedCs == 0);
+			Check($"many rows: false positives={falsePos}", falsePos == 0);
+			try { Directory.Delete(dir, true); } catch { }
+		}
         private static List<KeyValuePair<string, byte[]>> Snapshot(string db)
         {
             string stem = Path.ChangeExtension(db, null);
