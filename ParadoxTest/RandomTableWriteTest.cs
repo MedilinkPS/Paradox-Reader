@@ -290,7 +290,8 @@ namespace ParadoxTest
                     case ParadoxFieldTypes.Date: row[c.Name] = new DateTime(1990, 1, 1).AddDays(rng.Next(0, 12000)); break;
                     case ParadoxFieldTypes.Timestamp: row[c.Name] = new DateTime(2000, 1, 1).AddSeconds(rng.Next(0, int.MaxValue / 2)); break;
                     default:
-                        int len = Math.Max(1, Math.Min(c.Size, rng.Next(1, 24)));
+                        // Long values so unique, case-insensitive secondary indexes (e.g. TableLastModified.TableNameIndex) never collide.
+                        int len = c.Size >= 8 ? rng.Next(8, Math.Min(c.Size, 24) + 1) : Math.Max(1, rng.Next(1, c.Size + 1));
                         var sb = new StringBuilder(len);
                         for (int i = 0; i < len; i++) sb.Append((char)('A' + rng.Next(26)));
                         row[c.Name] = sb.ToString();

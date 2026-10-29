@@ -284,6 +284,7 @@ namespace ParadoxReader
         {
             using (fileLock.AcquireScopedWriteLock())
             {
+                CheckUniqueIndexes(fieldValues);
                 byte[]   recordBytes = SerializeRecord(fieldValues);
                 DbBlock  block       = FindOrAllocateBlockForInsert();
                 ushort   recIdx      = (ushort)block.RecordCount;
@@ -304,6 +305,57 @@ namespace ParadoxReader
             }
         }
 
+        /// <summary>
+        /// Throws <see cref="KeyViolationException"/> if <paramref name="fieldValues"/> would duplicate an existing
+        /// key in any unique secondary index (honouring each index's case sensitivity). Must run before any bytes are written.
+        /// </summary>
+        private void CheckUniqueIndexes(object[] fieldValues)
+        {
+            foreach (var idx in indexManager.SecondaryIndexes)
+            {
+                if (!idx.IsUnique) continue;
+
+                // Leading fields are the user's indexed fields; trailing PK fields are appended by Paradox for ordering only.
+                var fi = idx.FieldIndices;
+                int n = fi.Length;
+                while (n > 1 && fi[n - 1] < primaryKeyFields) n--;
+
+                bool skip = false;
+                var keyVals = new object[n];
+                for (int i = 0; i < n; i++)
+                {
+                    keyVals[i] = fi[i] < fieldValues.Length ? fieldValues[fi[i]] : null;
+                    if (keyVals[i] == null || keyVals[i] is DBNull || FieldTypes[fi[i]].fType == ParadoxFieldTypes.AutoInc) skip = true;
+                }
+                if (skip) continue;
+
+                var keyStrings = new string[n];
+                for (int i = 0; i < n; i++)
+                    keyStrings[i] = KeyToString(keyVals[i], idx.IsCaseSensitive);
+
+                foreach (var rec in Enumerate())
+                {
+                    bool same = true;
+                    for (int i = 0; i < n && same; i++)
+                    {
+                        var existing = rec.DataValues[fi[i]];
+                        if (existing == null || existing is DBNull ||
+                            KeyToString(existing, idx.IsCaseSensitive) != keyStrings[i])
+                            same = false;
+                    }
+                    if (same)
+                        throw new KeyViolationException(idx.FilePath,
+                            $"Key violation: unique index '{System.IO.Path.GetFileName(idx.FilePath)}' already contains key '{string.Join(", ", keyStrings)}'.");
+                }
+            }
+        }
+
+        private static string KeyToString(object value, bool caseSensitive)
+        {
+            string s = value is string str ? str.TrimEnd('\0', ' ') : Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture);
+            return caseSensitive ? s : s.ToUpperInvariant();
+        }
+
         // ----------------------------------------------------------------
         // Append
         // ----------------------------------------------------------------
@@ -319,6 +371,8 @@ namespace ParadoxReader
         {
             using (fileLock.AcquireScopedWriteLock())
             {
+                CheckUniqueIndexes(fieldValues);
+
                 // Paradox manages AutoInc values itself (not via a normal index),
                 // so we must assign/increment it manually before serializing.
                 AssignAutoIncValues(fieldValues);

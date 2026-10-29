@@ -182,6 +182,9 @@ namespace ParadoxReader
         /// <summary>refIntegrity (byte) @ 0x55. 0 for a freshly created file (no referential-integrity constraints).</summary>
         private byte refIntegrity;
 
+        /// <summary>For .Xnn/.XGn secondary index files, byte 0x55 holds the index options: 0x20 = unique, 0x01 = NOT case sensitive.</summary>
+        internal byte IndexOptions => refIntegrity;
+
         /// <summary>unknown56x57 (2 bytes) @ 0x56-0x57. Real BDE .DB/.Xnn/.XGn files always have 0x0020 here; .PX/.YGn files always have 0x0000 - confirmed empirically, same hasV4Header-gated pattern as unknown3Ex3F above.</summary>
         internal byte[] unknown56x57;  //array[$0056..$0057] of byte;
 

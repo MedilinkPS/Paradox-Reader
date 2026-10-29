@@ -77,6 +77,12 @@ namespace ParadoxReader
         /// </summary>
         public int[] FieldIndices => fieldIndices;
 
+        /// <summary>True if this index is flagged unique (header byte 0x55 bit 0x20).</summary>
+        public bool IsUnique => (indexFile.IndexOptions & 0x20) != 0;
+
+        /// <summary>True if this index is case sensitive (header byte 0x55 bit 0x01 set means NOT case sensitive).</summary>
+        public bool IsCaseSensitive => (indexFile.IndexOptions & 0x01) == 0;
+
         /// <summary>This index's own RecordCount header field (offset 0x06).</summary>
         public int RecordCount => indexFile.RecordCount;
 
