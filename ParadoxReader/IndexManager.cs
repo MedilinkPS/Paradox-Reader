@@ -232,6 +232,7 @@ namespace ParadoxReader
                     var secondaryIndex = fileStreams != null && fileStreams.TryGetValue(info.FilePath, out var indexStream)
                         ? new SecondaryIndexFile(indexStream, info.FilePath, info.IndexedFields, info.FieldIndices)
                         : new SecondaryIndexFile(info.FilePath, info.IndexedFields, info.FieldIndices);
+                    secondaryIndex.IndexedFieldCount = info.IndexedFieldCount;
                     if (IsIndexOutOfDate(secondaryIndex.AutoIncVal, dbAutoIncVal))
                     {
                         secondaryIndex.MarkOutOfDate();

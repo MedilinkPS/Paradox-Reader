@@ -77,6 +77,15 @@ namespace ParadoxReader
         /// </summary>
         public int[] FieldIndices => fieldIndices;
 
+        private int indexedFieldCount;
+
+        /// <summary>Number of leading <see cref="FieldIndices"/> that are the user's indexed fields (the rest are appended primary-key fields).</summary>
+        public int IndexedFieldCount
+        {
+            get => indexedFieldCount > 0 ? indexedFieldCount : fieldIndices.Length;
+            internal set => indexedFieldCount = value;
+        }
+
         /// <summary>True if this index is flagged unique (header byte 0x55 bit 0x20).</summary>
         public bool IsUnique => (indexFile.IndexOptions & 0x20) != 0;
 

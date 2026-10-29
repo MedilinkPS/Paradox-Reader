@@ -25,6 +25,11 @@ namespace ParadoxTest
         {
 
             int legacyTestRowCount;
+            if (args != null && args.Length > 0 && args[0] == "dupkeytest")
+            {
+                Environment.ExitCode = DuplicateKeyTest.Run();
+                return;
+            }
             if (args != null && args.Length > 0 && args[0] == "randomtables")
             {
                 int rtTables = 12, rtWrites = 260, rtSeed = 0;

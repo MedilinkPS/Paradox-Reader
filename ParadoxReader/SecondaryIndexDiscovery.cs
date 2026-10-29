@@ -78,7 +78,8 @@ namespace ParadoxReader
                 var indexedFields = new List<ParadoxFile.FieldInfo>();
                 var fieldIndices  = new List<int>();
 
-                int startField = f.indexFieldNumber - 1; // convert 1-based → 0-based
+                int userFieldCount = -1;
+                int startField = f.indexFieldNumber - 1;
 
                 if (startField >= 0 && startField < allFields.Length)
                 {
@@ -136,6 +137,7 @@ namespace ParadoxReader
                         fieldIndices.Add(foundPos);
                         searchFrom = foundPos + 1;
                     }
+                    userFieldCount = fieldIndices.Count;
 
                     // Append the primary key fields (positions 0..primaryKeyFieldCount-1)
                     // so the composed key matches what Paradox stores on disk, avoiding
@@ -185,7 +187,8 @@ namespace ParadoxReader
                 {
                     FilePath      = indexFilePath,
                     IndexedFields = indexedFields.ToArray(),
-                    FieldIndices  = fieldIndices.ToArray()
+                    FieldIndices  = fieldIndices.ToArray(),
+                    IndexedFieldCount = userFieldCount > 0 ? userFieldCount : fieldIndices.Count
                 };
             }
         }
