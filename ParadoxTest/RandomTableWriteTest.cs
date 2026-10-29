@@ -30,9 +30,11 @@ namespace ParadoxTest
         }
 
         private static int ProbeEvery = 1;
+        private static bool LegacyOnly = false;
 
         public static void Run(int tableCount = 12, int writesPerTable = 260, int seed = 0, string folder = null, string onlyTable = null, int probeEvery = 1)
         {
+            LegacyOnly = probeEvery == 0;
             ProbeEvery = Math.Max(1, probeEvery);
             folder = folder ?? LegacyWriteRows.LegacyWriteRowsDatabaseFolderPath;
             if (seed == 0) seed = Environment.TickCount;
@@ -161,6 +163,7 @@ namespace ParadoxTest
                     {
                         LegacyWriteRows.WriteRows(new[] { (legacyTable, BuildRow(cols, rng)) });
                         Validate(dbPath, startCount + step, step, writes);
+                        StepSnap(folder, tableName, tempRoot, step, "A");
                     }
                     Log(report, $"  A legacy-only x{writes}: OK");
                 }
@@ -173,7 +176,9 @@ namespace ParadoxTest
 
                 Restore(backupFolder, folder, tableName);
 
-                // ---- Pass B: ParadoxReader write, validate, legacy probe write, validate ----
+                if (LegacyOnly) return ok;
+
+                // ---- Pass B
                 step = 0;
                 string phase = "";
                 int expected = startCount;
@@ -187,12 +192,14 @@ namespace ParadoxTest
                             t.AppendRecord(cols.Select(c => row[c.Name]).ToArray());
                         expected++;
                         Validate(dbPath, expected, step, writes);
+                        StepSnap(folder, tableName, tempRoot, step, "P");
 
                         if (step % ProbeEvery != 0 && step != writes) continue;
                         phase = "legacy probe append after paradoxreader write";
                         LegacyWriteRows.WriteRows(new[] { (legacyTable, BuildRow(cols, rng)) });
                         expected++;
                         Validate(dbPath, expected, step, writes);
+                        StepSnap(folder, tableName, tempRoot, step, "L");
                     }
                     Log(report, $"  B interleaved reader+legacy x{writes}: OK");
                 }
@@ -209,6 +216,14 @@ namespace ParadoxTest
             }
             Console.WriteLine($"[randomtest] {tableName}: {(ok ? "OK" : "FAILED")}");
             return ok;
+        }
+
+        private static void StepSnap(string folder, string tableName, string tempRoot, int step, string kind)
+        {
+            if (Environment.GetEnvironmentVariable("PX_STEPS") != "1") return;
+            var dest = Path.Combine(tempRoot, "steps_" + tableName, step.ToString("D4") + kind);
+            Directory.CreateDirectory(dest);
+            BinaryComparisonTest.CopyTableSet(folder, tableName, dest, tableName);
         }
 
         private static void SaveFailureSnapshot(string folder, string tableName, string tempRoot, string label, StringBuilder report)

@@ -515,7 +515,7 @@ namespace ParadoxReader
                 int cur = indexFile.stream.ReadByte();
                 if (cur < 0) cur = 0;
                 indexFile.stream.Position = offset;
-                indexFile.stream.WriteByte((byte)(cur + 1));
+                indexFile.stream.WriteByte(offset == 0x2F && cur >= 0xFE ? (byte)0 : (byte)(cur + 1));
             }
         }
 
@@ -617,7 +617,7 @@ namespace ParadoxReader
             if (current < 0) current = 0;
             byte next = indexFile.FileType == ParadoxFileType.XgnFileInc
                 ? (byte)Math.Min(current + 1, 255)
-                : unchecked((byte)(current + 1));
+                : (current >= 0xFE ? (byte)0 : (byte)(current + 1));
             indexFile.stream.Position = ParadoxHeaderOffsets.WriteCounter;
             indexFile.stream.WriteByte(next);
         }

@@ -248,7 +248,8 @@ namespace ParadoxReader
             pxFile.stream.Position = ParadoxHeaderOffsets.WriteCounter;
             int current = pxFile.stream.ReadByte();
             if (current < 0) current = 0;
-            byte next = (byte)(current + 1);
+            // Legacy never produces 0xFF here: the counter goes 0xFE -> 0x00 (modulo 255), and the legacy tool cannot open an index whose counter is 0xFF.
+            byte next = current >= 0xFE ? (byte)0 : (byte)(current + 1);
             pxFile.stream.Position = ParadoxHeaderOffsets.WriteCounter;
             pxFile.stream.WriteByte(next);
         }

@@ -713,7 +713,12 @@ namespace ParadoxReader
         private void IncrementChangeCount()
         {
             changeCount1++;
-            if (changeCount1 == 0) changeCount2++; // carry on overflow
+            if (changeCount1 == 0)
+            {
+                // Legacy skips 0x00 on wrap (0xFF -> 0x01) and carries into changeCount2.
+                changeCount1 = 1;
+                changeCount2++;
+            }
 
             stream.Position = ParadoxHeaderOffsets.ChangeCount1;
             using (var w = new BinaryWriter(new NonClosingStreamWrapper(stream), Encoding.Default))

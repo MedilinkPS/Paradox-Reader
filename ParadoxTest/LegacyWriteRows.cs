@@ -100,7 +100,7 @@ namespace ParadoxTest
                         FileName = LegacyWriteRowsExeFilePath,
                         Arguments = $"-i \"{inputJsonFilePath}\" -o \"{outputJsonFilePath}\" -s", // -s = silent so it doesn't wait for input
                         RedirectStandardOutput = false,
-                        UseShellExecute = true,
+                        UseShellExecute = false,
                         CreateNoWindow = true
                     };
                     using (var process = System.Diagnostics.Process.Start(processInfo))
