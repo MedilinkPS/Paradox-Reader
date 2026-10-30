@@ -150,6 +150,15 @@ namespace ParadoxTest
                 }
                 Restore(backupFolder, folder, tableName);
 
+                bool sqlUsable = true;
+                try { SqlInsert(dbPath, cols, BuildRow(cols, rng)); }
+                catch (Exception ex)
+                {
+                    sqlUsable = false;
+                    Log(report, $"  NOTE: SQLRunner cannot write the untouched original, SQL probe disabled: {ex.Message}");
+                }
+                Restore(backupFolder, folder, tableName);
+
                 // ---- Pass A: legacy single writes, validated after each ----
                 int step = 0;
                 if (ProbeEvery > 1)
@@ -200,8 +209,19 @@ namespace ParadoxTest
                         expected++;
                         Validate(dbPath, expected, step, writes);
                         StepSnap(folder, tableName, tempRoot, step, "L");
+
+                        if (sqlUsable)
+                        {
+                            phase = "sqlrunner probe append after paradoxreader+legacy write";
+                            SqlInsert(dbPath, cols, BuildRow(cols, rng));
+                            expected++;
+                            StepSnap(folder, tableName, tempRoot, step, "S");
+                        }
+
+                        phase = "paradoxreader full re-read after probes";
+                        Validate(dbPath, expected, 0, writes);
                     }
-                    Log(report, $"  B interleaved reader+legacy x{writes}: OK");
+                    Log(report, $"  B interleaved reader+legacy{(sqlUsable ? "+sqlrunner" : "")} x{writes}: OK (final rows {expected})");
                 }
                 catch (Exception ex)
                 {
@@ -265,7 +285,7 @@ namespace ParadoxTest
             {
                 if (t.RecordCount != expectedCount)
                     throw new Exception($"RecordCount {t.RecordCount} != expected {expectedCount}");
-                if (step % 25 == 0 || step == total)
+                if (step == 0 || step % 25 == 0 || step == total)
                 {
                     int n = t.Enumerate().Count();
                     if (n != expectedCount)
@@ -299,6 +319,33 @@ namespace ParadoxTest
                 }
             }
             return row;
+        }
+
+        private static void SqlInsert(string dbPath, List<ColumnInfo> cols, Dictionary<string, object> row)
+        {
+            var names = new List<string>();
+            var lits = new List<string>();
+            foreach (var c in cols)
+            {
+                object v = row[c.Name];
+                string lit;
+                switch (c.Type)
+                {
+                    case ParadoxFieldTypes.AutoInc: continue;
+                    case ParadoxFieldTypes.Alpha: lit = "'" + ((string)v).Replace("'", "''") + "'"; break;
+                    case ParadoxFieldTypes.Logical: lit = (bool)v ? "TRUE" : "FALSE"; break;
+                    case ParadoxFieldTypes.Date: lit = "'" + ((DateTime)v).ToString("MM/dd/yyyy", System.Globalization.CultureInfo.InvariantCulture) + "'"; break;
+                    case ParadoxFieldTypes.Timestamp: lit = "'" + ((DateTime)v).ToString("MM/dd/yyyy HH:mm:ss", System.Globalization.CultureInfo.InvariantCulture) + "'"; break;
+                    default: lit = Convert.ToString(v, System.Globalization.CultureInfo.InvariantCulture); break;
+                }
+                names.Add("\"" + c.Name + "\"");
+                lits.Add(lit);
+            }
+            string sql = "INSERT INTO '" + dbPath + "' (" + string.Join(", ", names) + ") VALUES (" + string.Join(", ", lits) + ")";
+            var r = SqlRunner.Execute(sql, lockFileFolder: Path.GetDirectoryName(dbPath), timeoutMs: 15000);
+            if (!r.Exited) throw new Exception("SQLRunner timed out (killed)");
+            if (r.Stdout.IndexOf("error", StringComparison.OrdinalIgnoreCase) >= 0 || r.Stdout.IndexOf("exception", StringComparison.OrdinalIgnoreCase) >= 0)
+                throw new Exception("SQLRunner failed: " + r.Stdout.Trim());
         }
 
         private static void Restore(string backupFolder, string folder, string tableName)

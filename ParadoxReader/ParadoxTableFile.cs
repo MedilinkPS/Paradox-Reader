@@ -490,13 +490,19 @@ namespace ParadoxReader
                 keep = (recs.Count + 1) / 2;
 
                 second.NextBlock = target.NextBlock;
+                second.PrevBlock = (ushort)(target.BlockNumber + 1);
+                if (target.NextBlock != 0)
+                {
+                    DbBlock after = blockManager.ReadBlock((ushort)(target.NextBlock - 1));
+                    after.PrevBlock = (ushort)(second.BlockNumber + 1);
+                    blockManager.WriteBlock(after);
+                }
                 target.NextBlock = (ushort)(second.BlockNumber + 1);
                 if (lastBlock == (ushort)(target.BlockNumber + 1))
-                {
                     lastBlock = (ushort)(second.BlockNumber + 1);
-                    nextBlock = lastBlock;
-                }
                 fileBlocks = (ushort)(fileBlocks + 1);
+                // BDE keeps header nextBlock == number of allocated blocks (not the chain's last block).
+                nextBlock = fileBlocks;
                 WriteBlockHeadersToFileHeader();
             }
 
@@ -696,6 +702,8 @@ namespace ParadoxReader
             DbBlock oldLast = blockManager.ReadBlock(lastBlock0Based);
             oldLast.NextBlock = (ushort)(newBlock.BlockNumber + 1);
             blockManager.WriteBlock(oldLast);
+            newBlock.PrevBlock = lastBlock;
+            blockManager.WriteBlock(newBlock);
 
             // nextBlock must track the most-recently-allocated (i.e. now
             // last) block, same as lastBlock, or BDE sees a stale value and
@@ -704,8 +712,8 @@ namespace ParadoxReader
             // nextBlock == lastBlock, whereas leaving nextBlock at its
             // original single-block value diverges from BDE's own output.
             lastBlock  = (ushort)(newBlock.BlockNumber + 1); // header stores 1-based
-            nextBlock  = lastBlock;
             fileBlocks = (ushort)(fileBlocks + 1);
+            nextBlock  = fileBlocks;
             WriteBlockHeadersToFileHeader();
 
             return newBlock;
