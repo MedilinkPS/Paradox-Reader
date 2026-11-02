@@ -898,14 +898,18 @@ namespace ParadoxReader
         /// </summary>
         public void IncrementWriteCounter()
         {
-            // Legacy saturates the incremental Xgn write counter at 255 (observed);
-            // other index types wrap around as a normal byte counter.
+            // Legacy saturates the incremental Xgn write counter at 255 (observed).
+            // Ygn counters are compared by BDE against their Xgn's 0x2D counter (which wraps
+            // 0xFF->0x00), so they must wrap the same way; skipping 0xFF drifts by one per
+            // 255 writes and causes "Index version does not match table version".
             indexFile.stream.Position = ParadoxHeaderOffsets.WriteCounter;
             int current = indexFile.stream.ReadByte();
             if (current < 0) current = 0;
             byte next = indexFile.FileType == ParadoxFileType.XgnFileInc
                 ? (byte)Math.Min(current + 1, 255)
-                : (current >= 0xFE ? (byte)0 : (byte)(current + 1));
+                : IsAggregateIndex
+                    ? (byte)(current + 1)
+                    : (current >= 0xFE ? (byte)0 : (byte)(current + 1));
             indexFile.stream.Position = ParadoxHeaderOffsets.WriteCounter;
             indexFile.stream.WriteByte(next);
         }
