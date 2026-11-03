@@ -597,6 +597,9 @@ namespace ParadoxReader
         {
             // Observed against the legacy writer: incremental Xgn files bump the
             // bytes at 0x2D and 0x2F by one per write (Ygn/PX files do not).
+            // Both count modulo 255 (0xFE -> 0x00), matching the Ygn/PX counters; verified over
+            // 710 legacy writes. Wrapping 0x2D through 0xFF drifts from the Ygn counter and
+            // BDE reports "Index version does not match table version" on the Ygn.
             if (indexFile.FileType != ParadoxFileType.XgnFileInc) return;
             foreach (int offset in new[] { 0x2D, 0x2F })
             {
@@ -604,7 +607,7 @@ namespace ParadoxReader
                 int cur = indexFile.stream.ReadByte();
                 if (cur < 0) cur = 0;
                 indexFile.stream.Position = offset;
-                indexFile.stream.WriteByte(offset == 0x2F && cur >= 0xFE ? (byte)0 : (byte)(cur + 1));
+                indexFile.stream.WriteByte(cur >= 0xFE ? (byte)0 : (byte)(cur + 1));
             }
         }
 
@@ -898,18 +901,14 @@ namespace ParadoxReader
         /// </summary>
         public void IncrementWriteCounter()
         {
-            // Legacy saturates the incremental Xgn write counter at 255 (observed).
-            // Ygn counters are compared by BDE against their Xgn's 0x2D counter (which wraps
-            // 0xFF->0x00), so they must wrap the same way; skipping 0xFF drifts by one per
-            // 255 writes and causes "Index version does not match table version".
+            // Legacy saturates the incremental Xgn write counter at 255 (observed);
+            // other index types count modulo 255 (0xFE -> 0x00, never 0xFF).
             indexFile.stream.Position = ParadoxHeaderOffsets.WriteCounter;
             int current = indexFile.stream.ReadByte();
             if (current < 0) current = 0;
             byte next = indexFile.FileType == ParadoxFileType.XgnFileInc
                 ? (byte)Math.Min(current + 1, 255)
-                : IsAggregateIndex
-                    ? (byte)(current + 1)
-                    : (current >= 0xFE ? (byte)0 : (byte)(current + 1));
+                : (current >= 0xFE ? (byte)0 : (byte)(current + 1));
             indexFile.stream.Position = ParadoxHeaderOffsets.WriteCounter;
             indexFile.stream.WriteByte(next);
         }
