@@ -29,7 +29,9 @@ namespace ParadoxTest
             {
                 int witRounds = 5;
                 if (args.Length > 1) int.TryParse(args[1], out witRounds);
-                IndexWriteLookupTest.Run(witRounds, args.Length > 2 ? args[2] : "ClientVersionLog");
+                IndexWriteLookupTest.Run(witRounds, args.Length > 2 ? args[2] : "ClientVersionLog",
+                    args.Length > 3 ? args[3].Split(',') : null,
+                    args.Length > 4 && args[4] == "quiet");
                 return;
             }
             if (args != null && args.Length > 0 && args[0] == "dupkeytest")

@@ -20,7 +20,7 @@ namespace ParadoxTest
     {
         private static readonly string[] SqlSkipColumns = { "Id", "VersionBuildDate", "DateTime" };
 
-        public static void Run(int rounds = 5, string tableName = "ClientVersionLog")
+        public static void Run(int rounds = 5, string tableName = "ClientVersionLog", string[] writers = null, bool quiet = false)
         {
             string dataFolder = LegacyWriteRows.LegacyWriteRowsDatabaseFolderPath;
             string stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
@@ -36,7 +36,7 @@ namespace ParadoxTest
 
             try
             {
-                foreach (string writer in new[] { "paradoxreader", "sqlrunner", "legacy" })
+                foreach (string writer in writers ?? new[] { "paradoxreader", "sqlrunner", "legacy" })
                 {
                     if (writer == "sqlrunner" && !SqlRunner.IsAvailable) { Log(report, "SKIP sqlrunner (not configured)"); continue; }
                     if (writer == "legacy" && string.IsNullOrEmpty(LegacyWriteRows.LegacyWriteRowsExeFilePath)) { Log(report, "SKIP legacy (not configured)"); continue; }
@@ -54,6 +54,19 @@ namespace ParadoxTest
 
                     for (int i = 1; i <= rounds; i++)
                     {
+                        if (quiet)
+                        {
+                            try { WriteOne(writer, tablePath, tableName, i, report); }
+                            catch (Exception ex) { Log(report, "WRITE FAILED #" + i + ": " + ex.Message); break; }
+                            if (i % 50 == 0 || i == rounds) Log(report, "  " + writer + " wrote " + i + "/" + rounds);
+                            if (i == rounds)
+                            {
+                                prev = Snapshot(dataFolder, tableName);
+                                Log(report, "row count now " + CountRows(tablePath));
+                                ReportLookups(report, tablePath, controls, "control");
+                            }
+                            continue;
+                        }
                         Log(report, "--- " + writer + " write #" + i + " ---");
                         int before = CountRows(tablePath);
                         try { WriteOne(writer, tablePath, tableName, i, report); }
