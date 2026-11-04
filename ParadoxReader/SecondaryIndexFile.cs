@@ -130,7 +130,7 @@ namespace ParadoxReader
         // ----------------------------------------------------------------
 
         internal SecondaryIndexFile(string indexFilePath, ParadoxFile.FieldInfo[] indexedFields, int[] fieldIndices)
-            : this(new FileStream(indexFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite), indexFilePath, indexedFields, fieldIndices)
+            : this(new FileStream(indexFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1), indexFilePath, indexedFields, fieldIndices)
         {
         }
 

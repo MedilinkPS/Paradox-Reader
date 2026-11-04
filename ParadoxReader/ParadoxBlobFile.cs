@@ -22,7 +22,7 @@ namespace ParadoxReader
         private readonly BinaryReader reader;
 
         public ParadoxBlobFile(string fileName)
-            : this(new FileStream(fileName, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
+            : this(new FileStream(fileName, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1))
         {
         }
 

@@ -33,6 +33,7 @@ namespace ParadoxReader
         private IndexManager    indexManager;
         private ParadoxFileLock fileLock;
         private short                    tableVersion;
+        private bool                     indexesFromSuppliedStreams;
 
         public ParadoxPrimaryKey PrimaryKeyIndex;
         private ParadoxBlobFile  BlobFile;
@@ -149,6 +150,7 @@ namespace ParadoxReader
         /// </summary>
         private void InitializeAfterHeaderRead(string filePath, IDictionary<string, Stream> associatedFileStreams = null)
         {
+            indexesFromSuppliedStreams = associatedFileStreams != null;
             blockManager = new BlockManager(
                 stream,
                 headerSize,
@@ -378,6 +380,17 @@ namespace ParadoxReader
         // ----------------------------------------------------------------
 
         /// <summary>
+        /// Opens the table, appends one record, and closes it again. Preferred over keeping a
+        /// long-lived <see cref="ParadoxTableFile"/> open when other processes/machines may also
+        /// write to the same table: nothing is cached between writes.
+        /// </summary>
+        public static ParadoxReader.ParadoxRecord AppendRecord(string dbFilePath, object[] fieldValues)
+        {
+            using (var table = new ParadoxTableFile(dbFilePath))
+                return table.AppendRecord(fieldValues);
+        }
+
+        /// <summary>
         /// Appends a new record to the end of the table (always adds a new
         /// record rather than reusing/overwriting an existing slot), updates
         /// all index files, and manually assigns/advances any AutoInc field.
@@ -580,6 +593,12 @@ namespace ParadoxReader
         /// </summary>
         private void RefreshHeaderState()
         {
+            int    oldCount   = RecordCount;
+            int    oldAutoInc = autoIncVal;
+            short  oldVersion = tableVersion;
+            ushort oldBlocks  = fileBlocks;
+            ushort oldLast    = lastBlock;
+
             long saved = stream.Position;
             using (var r = new BinaryReader(new NonClosingStreamWrapper(stream), Encoding.Default))
             {
@@ -602,6 +621,29 @@ namespace ParadoxReader
                 if (V4Header != null) V4Header.changeCount4 = ver;
             }
             stream.Position = saved;
+
+            bool changedExternally = RecordCount != oldCount || autoIncVal != oldAutoInc ||
+                                     tableVersion != oldVersion || fileBlocks != oldBlocks || lastBlock != oldLast;
+            if (changedExternally && !indexesFromSuppliedStreams)
+                ReloadIndexes();
+        }
+
+        /// <summary>
+        /// Discards all in-memory index state (PX/XGn/YGn block maps, record counts, flat-index caches)
+        /// and reopens the index files from disk, so writes after another writer's changes start from
+        /// the current on-disk indexes instead of this instance's stale view.
+        /// </summary>
+        private void ReloadIndexes()
+        {
+            indexManager?.Dispose();
+            PrimaryKeyIndex?.Dispose();
+            BlobFile?.Dispose();
+            PrimaryKeyIndex = null;
+            BlobFile = null;
+            secondaryIndexHandles = null;
+
+            indexManager = new IndexManager(filePath, FieldTypes, primaryKeyFields, autoIncVal, null);
+            DiscoverAssociatedFiles(filePath);
         }
 
         private void WriteAutoIncValToHeader()

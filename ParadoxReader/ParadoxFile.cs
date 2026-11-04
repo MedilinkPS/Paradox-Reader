@@ -349,7 +349,7 @@ namespace ParadoxReader
             this.stream.Flush();
         }
 
-        public ParadoxFile(string filePath) : this(new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite))
+        public ParadoxFile(string filePath) : this(new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1))
         {
         }
 

@@ -34,6 +34,19 @@ namespace ParadoxTest
                     args.Length > 4 && args[4] == "quiet");
                 return;
             }
+            if (args != null && args.Length > 0 && args[0] == "concurrenttest")
+            {
+                int cp = 3, cr = 300;
+                if (args.Length > 2) int.TryParse(args[2], out cp);
+                if (args.Length > 3) int.TryParse(args[3], out cr);
+                Environment.ExitCode = ConcurrentWriteTest.Run(args.Length > 1 ? args[1] : @"C:\medilink32bnt\data\ClientVersionLog.indexfixed_202611050741.DB", cp, cr);
+                return;
+            }
+            if (args != null && args.Length > 3 && args[0] == "concurrentworker")
+            {
+                Environment.ExitCode = ConcurrentWriteTest.Worker(args[1], int.Parse(args[2]), int.Parse(args[3]));
+                return;
+            }
             if (args != null && args.Length > 0 && args[0] == "dupkeytest")
             {
                 Environment.ExitCode = DuplicateKeyTest.Run();
