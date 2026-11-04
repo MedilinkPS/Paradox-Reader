@@ -284,6 +284,7 @@ namespace ParadoxReader
         {
             using (fileLock.AcquireScopedWriteLock())
             {
+                RefreshHeaderState();
                 CheckUniqueIndexes(fieldValues);
                 byte[]   recordBytes = SerializeRecord(fieldValues);
                 DbBlock  block       = FindOrAllocateBlockForInsert();
@@ -307,7 +308,7 @@ namespace ParadoxReader
 
         /// <summary>
         /// Throws
-        /// key in any unique secondary index (honouring each index's case sensitivity). Must run before any bytes are written.
+        /// key in any unique
         /// </summary>
         private void CheckUniqueIndexes(object[] fieldValues)
         {
@@ -387,9 +388,10 @@ namespace ParadoxReader
         {
             using (fileLock.AcquireScopedWriteLock())
             {
+                RefreshHeaderState();
                 CheckUniqueIndexes(fieldValues);
 
-                // Paradox manages AutoInc values itself (not via a normal index),
+                // Paradox manages
                 // so we must assign/increment it manually before serializing.
                 AssignAutoIncValues(fieldValues);
 
@@ -550,6 +552,14 @@ namespace ParadoxReader
                 if (FieldTypes[i].fType != ParadoxFieldTypes.AutoInc)
                     continue;
 
+                // Another writer may have advanced the on-disk counter since this instance was opened.
+                stream.Position = ParadoxHeaderOffsets.AutoIncVal;
+                int diskVal;
+                using (var r = new BinaryReader(new NonClosingStreamWrapper(stream), Encoding.Default))
+                    diskVal = r.ReadInt32();
+                if (diskVal > autoIncVal)
+                    autoIncVal = diskVal;
+
                 autoIncVal++;
                 fieldValues[i] = autoIncVal;
                 assigned = true;
@@ -563,6 +573,37 @@ namespace ParadoxReader
         }
 
         /// <summary>AutoIncVal (longint) is at offset 0x49.</summary>
+        /// <summary>
+        /// Re-reads the mutable header fields from disk. Must be called right after the write lock is
+        /// acquired: other writers (other processes/machines) may have changed them since this
+        /// instance was opened, and writing back stale values duplicates AutoInc IDs and loses counts.
+        /// </summary>
+        private void RefreshHeaderState()
+        {
+            long saved = stream.Position;
+            using (var r = new BinaryReader(new NonClosingStreamWrapper(stream), Encoding.Default))
+            {
+                stream.Position = ParadoxHeaderOffsets.RecordCount;
+                RecordCount = r.ReadInt32();
+                stream.Position = ParadoxHeaderOffsets.BlockChain;
+                nextBlock  = r.ReadUInt16();
+                fileBlocks = r.ReadUInt16();
+                firstBlock = r.ReadUInt16();
+                lastBlock  = r.ReadUInt16();
+                stream.Position = ParadoxHeaderOffsets.ChangeCount1;
+                changeCount1 = r.ReadByte();
+                changeCount2 = r.ReadByte();
+                stream.Position = ParadoxHeaderOffsets.AutoIncVal;
+                int disk = r.ReadInt32();
+                if (disk > autoIncVal) autoIncVal = disk;
+                stream.Position = ParadoxHeaderOffsets.ChangeCount4;
+                short ver = r.ReadInt16();
+                tableVersion = ver;
+                if (V4Header != null) V4Header.changeCount4 = ver;
+            }
+            stream.Position = saved;
+        }
+
         private void WriteAutoIncValToHeader()
         {
             stream.Position = ParadoxHeaderOffsets.AutoIncVal;
@@ -581,6 +622,7 @@ namespace ParadoxReader
         {
             using (fileLock.AcquireScopedWriteLock())
             {
+                RefreshHeaderState();
                 byte[]  recordBytes = SerializeRecord(newFieldValues);
                 DbBlock block       = blockManager.ReadBlock(existing.BlockNumber);
 
@@ -606,6 +648,7 @@ namespace ParadoxReader
         {
             using (fileLock.AcquireScopedWriteLock())
             {
+                RefreshHeaderState();
                 DbBlock block = blockManager.ReadBlock(record.BlockNumber);
 
                 // Shift all records after the deleted one down by one slot
@@ -793,9 +836,10 @@ namespace ParadoxReader
             changeCount1++;
             if (changeCount1 == 0)
             {
-                // Legacy skips 0x00 on wrap (0xFF -> 0x01) and carries into changeCount2.
+                // Legacy wraps modulo 255 (0xFF -> 0x01) and does NOT carry into changeCount2:
+                // BDE compares DB 0x2E with each XGn's 0x2E, so bumping it reports
+                // "Index version does not match table version" (verified: 710 legacy writes 0x2E stays 0x84).
                 changeCount1 = 1;
-                changeCount2++;
             }
 
             stream.Position = ParadoxHeaderOffsets.ChangeCount1;
