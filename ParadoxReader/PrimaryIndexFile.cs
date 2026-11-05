@@ -377,13 +377,26 @@ namespace ParadoxReader
         /// </summary>
         public void IncrementWriteCounter()
         {
+            SetWriteCounter(-1);
+        }
+
+        /// <summary>
+        /// Advances the .PX write counter (0x2C). When <paramref name="target"/> is
+        /// non-negative the counter is set to it (used to re-align with the Xgn 0x2F
+        /// counter); otherwise it is incremented. Returns how many steps (mod 255) it moved.
+        /// </summary>
+        internal int SetWriteCounter(int target)
+        {
             pxFile.stream.Position = ParadoxHeaderOffsets.WriteCounter;
             int current = pxFile.stream.ReadByte();
             if (current < 0) current = 0;
             // Legacy never produces 0xFF here: the counter goes 0xFE -> 0x00 (modulo 255), and the legacy tool cannot open an index whose counter is 0xFF.
-            byte next = current >= 0xFE ? (byte)0 : (byte)(current + 1);
+            byte next = target >= 0 && target < 0xFF
+                ? (byte)target
+                : current >= 0xFE ? (byte)0 : (byte)(current + 1);
             pxFile.stream.Position = ParadoxHeaderOffsets.WriteCounter;
             pxFile.stream.WriteByte(next);
+            return (next - current + 255) % 255;
         }
 
         // ----------------------------------------------------------------

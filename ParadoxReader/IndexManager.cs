@@ -213,10 +213,23 @@ namespace ParadoxReader
         /// </summary>
         public void IncrementWriteCounter()
         {
-            PrimaryIndexFile?.IncrementWriteCounter();
+            // BDE/Pdxrbld requires .PX 0x2C == every incremental .XGn 0x2F, and the .YGn
+            // 0x2C counters to advance in lock-step with the .PX. Derive the .PX counter
+            // from the (already incremented, see SyncChangeCount) .XGn counter and move
+            // the .YGn counters by the same amount, so a previously interrupted or
+            // concurrent write can't leave them permanently out of step.
+            int xgCounter = -1;
+            foreach (var idx in secondaryIndexes)
+            {
+                xgCounter = idx.ReadXgnVersionCounter();
+                if (xgCounter >= 0) break;
+            }
+
+            int delta = PrimaryIndexFile != null ? PrimaryIndexFile.SetWriteCounter(xgCounter) : 1;
+            if (delta == 0) delta = 1;
 
             foreach (var idx in secondaryIndexes)
-                idx.IncrementWriteCounter();
+                idx.IncrementWriteCounterBy(idx.ReadXgnVersionCounter() >= 0 ? 1 : delta);
         }
 
         // ----------------------------------------------------------------

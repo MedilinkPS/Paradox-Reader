@@ -901,14 +901,32 @@ namespace ParadoxReader
         /// </summary>
         public void IncrementWriteCounter()
         {
+            IncrementWriteCounterBy(1);
+        }
+
+        /// <summary>
+        /// Incremental Xgn files keep a write counter at 0x2F that must always equal the
+        /// .PX's write counter (0x2C) - verified across every legacy/BDE sample. Returns -1
+        /// for any other index type.
+        /// </summary>
+        internal int ReadXgnVersionCounter()
+        {
+            if (indexFile.FileType != ParadoxFileType.XgnFileInc) return -1;
+            indexFile.stream.Position = 0x2F;
+            return indexFile.stream.ReadByte();
+        }
+
+        internal void IncrementWriteCounterBy(int delta)
+        {
+            if (delta <= 0) return;
             // Legacy saturates the incremental Xgn write counter at 255 (observed);
             // other index types count modulo 255 (0xFE -> 0x00, never 0xFF).
             indexFile.stream.Position = ParadoxHeaderOffsets.WriteCounter;
             int current = indexFile.stream.ReadByte();
             if (current < 0) current = 0;
             byte next = indexFile.FileType == ParadoxFileType.XgnFileInc
-                ? (byte)Math.Min(current + 1, 255)
-                : (current >= 0xFE ? (byte)0 : (byte)(current + 1));
+                ? (byte)Math.Min(current + delta, 255)
+                : (byte)((current + delta) % 255);
             indexFile.stream.Position = ParadoxHeaderOffsets.WriteCounter;
             indexFile.stream.WriteByte(next);
         }
