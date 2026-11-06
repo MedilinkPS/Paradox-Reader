@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -40,6 +40,22 @@ namespace ParadoxTest
                 if (args.Length > 2) int.TryParse(args[2], out cp);
                 if (args.Length > 3) int.TryParse(args[3], out cr);
                 Environment.ExitCode = ConcurrentWriteTest.Run(args.Length > 1 ? args[1] : @"C:\medilink32bnt\data\ClientVersionLog.indexfixed_202611050741.DB", cp, cr);
+                return;
+            }
+            if (args != null && args.Length > 0 && args[0] == "cvlstress")
+            {
+                int cb = 120, cs = 100;
+                if (args.Length > 2) int.TryParse(args[2], out cb);
+                if (args.Length > 3) int.TryParse(args[3], out cs);
+                Environment.ExitCode = ClientVersionLogStressTest.Run(args.Length > 1 ? args[1] : "reader", cb, cs);
+                return;
+            }
+            if (args != null && args.Length > 0 && args[0] == "servicesimtest")
+            {
+                int sb = 150, ss = 100;
+                if (args.Length > 2) int.TryParse(args[2], out sb);
+                if (args.Length > 3) int.TryParse(args[3], out ss);
+                Environment.ExitCode = ServiceSimTest.Run(args.Length > 1 ? args[1] : @"C:\medilink32bnt\data\ClientVersionLog.indexfixed_202611060803.DB", sb, ss, args.Length > 4 ? args[4] : null);
                 return;
             }
             if (args != null && args.Length > 3 && args[0] == "concurrentworker")

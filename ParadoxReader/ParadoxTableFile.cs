@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -287,6 +287,7 @@ namespace ParadoxReader
             using (fileLock.AcquireScopedWriteLock())
             {
                 RefreshHeaderState();
+                var headersBefore = CaptureFileHeaders();
                 CheckUniqueIndexes(fieldValues);
                 byte[]   recordBytes = SerializeRecord(fieldValues);
                 DbBlock  block       = FindOrAllocateBlockForInsert();
@@ -303,6 +304,7 @@ namespace ParadoxReader
                 indexManager.OnRowAppended(fieldValues, block.BlockNumber);
                 indexManager.SyncRecordCount(RecordCount);
                 IncrementChangeCount();
+                VerifyFileHeadersChanged(headersBefore, "InsertRecord");
 
                 return new ParadoxRecord(block.BlockNumber, recIdx, fieldValues);
             }
@@ -402,6 +404,7 @@ namespace ParadoxReader
             using (fileLock.AcquireScopedWriteLock())
             {
                 RefreshHeaderState();
+                var headersBefore = CaptureFileHeaders();
                 CheckUniqueIndexes(fieldValues);
 
                 // Paradox manages
@@ -411,7 +414,11 @@ namespace ParadoxReader
                 byte[]   recordBytes = SerializeRecord(fieldValues);
 
                 if (RequiresSortedInsert())
-                    return AppendSorted(fieldValues, recordBytes);
+                {
+                    var sorted = AppendSorted(fieldValues, recordBytes);
+                    VerifyFileHeadersChanged(headersBefore, "AppendRecord");
+                    return sorted;
+                }
 
                 DbBlock  block       = FindOrAllocateBlockForInsert();
                 ushort   recIdx      = (ushort)block.RecordCount;
@@ -427,9 +434,146 @@ namespace ParadoxReader
                 indexManager.OnRowAppended(fieldValues, block.BlockNumber);
                 indexManager.SyncRecordCount(RecordCount);
                 IncrementChangeCount();
+                VerifyFileHeadersChanged(headersBefore, "AppendRecord");
 
                 return new ParadoxRecord(block.BlockNumber, recIdx, fieldValues);
             }
+        }
+
+        // ----------------------------------------------------------------
+        // Post-write verification
+        // ----------------------------------------------------------------
+
+        /// <summary>
+        /// Optional; off by default. When true, every write on this instance captures the headers of the .DB, .PX, .Xnn/.Xgn and .Ynn/.Ygn files
+        /// before the write and checks afterwards that each one changed (every write advances a
+        /// change/version counter in all of them). Files left untouched indicate an index that was
+        /// not updated. Failures are reported via <see cref="WriteVerificationFailed"/> and
+        /// <see cref="System.Diagnostics.Trace"/>; the write itself is not rolled back.
+        /// </summary>
+        public bool VerifyWrites { get; set; }
+
+        /// <summary>Raised when <see cref="VerifyWrites"/> finds a table/index file that a write did not modify.
+        /// Arguments: .DB path, operation name, message listing the unmodified files.</summary>
+        public event Action<string, string, string> WriteVerificationFailed;
+
+        private const int VerifyHeaderBytes = 0x80;
+
+        private Dictionary<string, byte[]> CaptureFileHeaders()
+        {
+            if (!VerifyWrites) return null;
+            var result = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            string dir  = Path.GetDirectoryName(filePath);
+            string name = Path.GetFileNameWithoutExtension(filePath);
+            foreach (var f in Directory.GetFiles(string.IsNullOrEmpty(dir) ? "." : dir, name + DOT_WILD))
+            {
+                if (!string.Equals(Path.GetFileNameWithoutExtension(f), name, StringComparison.OrdinalIgnoreCase)) continue;
+                string ext = Path.GetExtension(f).ToUpperInvariant();
+                bool tracked = ext == DOT_DB || ext == DOT_PX ||
+                               (ext.Length == 4 && (ext[1] == 'X' || ext[1] == 'Y') && Uri.IsHexDigit(ext[3]));
+                if (tracked) result[f] = ReadHeaderBytes(f);
+            }
+            return result;
+        }
+
+        private static byte[] ReadHeaderBytes(string path)
+        {
+            var buf = new byte[VerifyHeaderBytes];
+            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1))
+            {
+                int read = 0, n;
+                while (read < buf.Length && (n = fs.Read(buf, read, buf.Length - read)) > 0) read += n;
+            }
+            return buf;
+        }
+
+        /// <summary>
+        /// Walks a flat index file's block chain (block headers only) and counts the actual entries.
+        /// The XGn header record count is re-synced on every write, so it cannot reveal missing entries.
+        /// </summary>
+        private static string CountChainRows(string path, out int rows, out int blocks)
+        {
+            rows = 0; blocks = 0;
+            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete, 1))
+            using (var r = new BinaryReader(fs))
+            {
+                ushort recSize    = r.ReadUInt16();
+                ushort headerSize = r.ReadUInt16();
+                fs.Position = 5;
+                int blockSize = fs.ReadByte() * 0x400;
+                fs.Position = 0x0C;
+                ushort fileBlocks = r.ReadUInt16();
+                ushort block      = r.ReadUInt16();
+                if (recSize == 0 || blockSize <= 0) return "invalid header";
+                var seen = new HashSet<ushort>();
+                ushort prev = 0;
+                while (block != 0)
+                {
+                    if (block > fileBlocks || !seen.Add(block)) return $"broken block chain at block {block}";
+                    fs.Position = headerSize + (long)(block - 1) * blockSize;
+                    ushort next     = r.ReadUInt16();
+                    ushort prevLink = r.ReadUInt16();
+                    short  used     = r.ReadInt16();
+                    if (prevLink != prev) return $"block {block} prev link {prevLink} != {prev}";
+                    if (used >= 0) rows += used / recSize + 1;
+                    blocks++;
+                    prev  = block;
+                    block = next;
+                }
+            }
+            return null;
+        }
+
+        private void VerifyFileHeadersChanged(Dictionary<string, byte[]> before, string operation)
+        {
+            if (before == null) return;
+            var unchanged = new List<string>();
+            var problems  = new List<string>();
+            var after     = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            foreach (var kv in before)
+            {
+                byte[] now;
+                try { now = ReadHeaderBytes(kv.Key); }
+                catch (Exception ex) { problems.Add(Path.GetFileName(kv.Key) + " unreadable: " + ex.Message); continue; }
+                after[kv.Key] = now;
+                bool same = true;
+                for (int i = 0; i < now.Length && same; i++) same = now[i] == kv.Value[i];
+                if (same) unchanged.Add(Path.GetFileName(kv.Key));
+            }
+
+            // Row counts: every XGn holds one row per table record; every YGn holds one row per
+            // block of its XGn (verified against BDE/Pdxrbld output).
+            int dbCount = RecordCount;
+            foreach (var kv in after)
+            {
+                string ext = Path.GetExtension(kv.Key).ToUpperInvariant();
+                if (ext.Length != 4 || ext[2] != 'G') continue;
+                int rc = BitConverter.ToInt32(kv.Value, ParadoxHeaderOffsets.RecordCount);
+                if (ext[1] == 'X')
+                {
+                    if (rc != dbCount) problems.Add($"{Path.GetFileName(kv.Key)} header rows {rc} != DB rows {dbCount}");
+                    int rows, blocks;
+                    string chainErr = CountChainRows(kv.Key, out rows, out blocks);
+                    if (chainErr != null) problems.Add($"{Path.GetFileName(kv.Key)} {chainErr}");
+                    else if (rows != dbCount) problems.Add($"{Path.GetFileName(kv.Key)} actual entries {rows} != DB rows {dbCount}");
+                }
+                else if (ext[1] == 'Y')
+                {
+                    string xg = Path.ChangeExtension(kv.Key, ".XG" + ext[3]);
+                    byte[] xh = null;
+                    foreach (var o in after) if (string.Equals(o.Key, xg, StringComparison.OrdinalIgnoreCase)) xh = o.Value;
+                    if (xh == null) continue;
+                    int xgBlocks = BitConverter.ToUInt16(xh, 0x0C);
+                    if (rc != xgBlocks) problems.Add($"{Path.GetFileName(kv.Key)} rows {rc} != {Path.GetFileName(xg)} blocks {xgBlocks}");
+                }
+            }
+
+            if (unchanged.Count > 0) problems.Insert(0, "did not modify: " + string.Join(", ", unchanged));
+            if (problems.Count == 0) return;
+
+            string msg = $"ParadoxReader {operation} on '{filePath}': {string.Join("; ", problems)} (RecordCount={RecordCount}, AutoInc={autoIncVal})";
+            System.Diagnostics.Trace.TraceError(msg);
+            try { WriteVerificationFailed?.Invoke(filePath, operation, msg); } catch { /* never let a handler break the write */ }
         }
 
         /// <summary>
@@ -665,6 +809,7 @@ namespace ParadoxReader
             using (fileLock.AcquireScopedWriteLock())
             {
                 RefreshHeaderState();
+                var headersBefore = CaptureFileHeaders();
                 byte[]  recordBytes = SerializeRecord(newFieldValues);
                 DbBlock block       = blockManager.ReadBlock(existing.BlockNumber);
 
@@ -673,6 +818,7 @@ namespace ParadoxReader
 
                 NotifyBlockChanged(block);
                 IncrementChangeCount();
+                VerifyFileHeadersChanged(headersBefore, "UpdateRecord");
 
                 // Refresh cached values on the record object
                 existing.DataValues = newFieldValues;
@@ -691,6 +837,7 @@ namespace ParadoxReader
             using (fileLock.AcquireScopedWriteLock())
             {
                 RefreshHeaderState();
+                var headersBefore = CaptureFileHeaders();
                 DbBlock block = blockManager.ReadBlock(record.BlockNumber);
 
                 // Shift all records after the deleted one down by one slot
@@ -707,6 +854,7 @@ namespace ParadoxReader
 
                 NotifyBlockChanged(block);
                 IncrementChangeCount();
+                VerifyFileHeadersChanged(headersBefore, "DeleteRecord");
             }
         }
 
@@ -765,13 +913,17 @@ namespace ParadoxReader
             DbBlock candidate = blockManager.ReadBlock(lastBlock0Based);
             if (candidate.HasRoom) return candidate;
 
+            // Keyed tables must stay in primary-key order: an appended (highest) key can only go
+            // into the last block. BDE leaves free slots in earlier blocks, so filling those would
+            // put records out of sort order and desync the .PX/.XGn indexes.
+            ushort current = primaryKeyFields > 0 ? lastBlock0Based : firstBlock0Based;
+
             // Paradox blocks only chain forward (NextBlock) — no back-pointer
             // exists, so walk forward from the first block looking for room.
             // Like firstBlock/lastBlock/nextBlock in the file header, a
             // block's own NextBlock field is 1-based (0 = none/end of chain),
             // NOT the raw 0-based BlockNumber, so it must be converted before
             // use as a physical block index.
-            ushort current = firstBlock0Based;
             while (current != lastBlock0Based)
             {
                 DbBlock block = blockManager.ReadBlock(current);
