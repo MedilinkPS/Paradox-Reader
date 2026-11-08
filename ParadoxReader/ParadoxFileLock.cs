@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.IO;
 using System.Threading;
 
@@ -69,7 +69,20 @@ namespace ParadoxReader
 
             // 1. In-process mutex
             mutex = new Mutex(false, mutexName);
-            if (!mutex.WaitOne(LOCK_TIMEOUT_MS))
+            bool acquired;
+            try
+            {
+                acquired = mutex.WaitOne(LOCK_TIMEOUT_MS);
+            }
+            catch (AbandonedMutexException)
+            {
+                // A previous owner (e.g. an IIS worker killed mid-write) exited without releasing.
+                // Ownership has been transferred to us; the previous write may be incomplete.
+                System.Diagnostics.Trace.TraceWarning(
+                    $"ParadoxReader: write lock for '{lckFilePath}' was abandoned by another process; a previous write may be incomplete.");
+                acquired = true;
+            }
+            if (!acquired)
             {
                 mutex.Close();
                 mutex = null;
