@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -89,7 +89,7 @@ namespace ParadoxReader
         // ----------------------------------------------------------------
 
         public PrimaryIndexFile(string pxFilePath, ParadoxFile.FieldInfo[] primaryKeyFields)
-            : this(new FileStream(pxFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1), pxFilePath, primaryKeyFields)
+            : this(ParadoxFileOpen.Open(pxFilePath), pxFilePath, primaryKeyFields)
         {
         }
 

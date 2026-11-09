@@ -31,6 +31,9 @@ namespace ParadoxReader
         private          bool       isLocked;
         private          int        lockDepth;
 
+        /// <summary>True while this instance holds the write lock.</summary>
+        internal bool IsHeld => isLocked;
+
         // ----------------------------------------------------------------
         // Constructor
         // ----------------------------------------------------------------

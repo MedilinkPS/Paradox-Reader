@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics;
@@ -349,7 +349,7 @@ namespace ParadoxReader
             this.stream.Flush();
         }
 
-        public ParadoxFile(string filePath) : this(new FileStream(filePath, FileMode.Open, FileAccess.ReadWrite, FileShare.ReadWrite, 1))
+        public ParadoxFile(string filePath) : this(ParadoxFileOpen.Open(filePath))
         {
         }
 

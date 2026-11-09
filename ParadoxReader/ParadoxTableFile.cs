@@ -284,6 +284,7 @@ namespace ParadoxReader
         /// <returns>The newly inserted record including its block/record position.</returns>
         public ParadoxReader.ParadoxRecord InsertRecord(object[] fieldValues)
         {
+            ThrowIfReadOnly();
             using (fileLock.AcquireScopedWriteLock())
             {
                 RefreshHeaderState();
@@ -401,6 +402,7 @@ namespace ParadoxReader
         /// <returns>The newly appended record including its block/record position.</returns>
         public ParadoxReader.ParadoxRecord AppendRecord(object[] fieldValues)
         {
+            ThrowIfReadOnly();
             using (fileLock.AcquireScopedWriteLock())
             {
                 RefreshHeaderState();
@@ -777,6 +779,36 @@ namespace ParadoxReader
         /// and reopens the index files from disk, so writes after another writer's changes start from
         /// the current on-disk indexes instead of this instance's stale view.
         /// </summary>
+		/// <summary>True when opened via <see cref="OpenReadOnly"/>; all files are opened read-only and writes throw.</summary>
+		public bool IsReadOnly { get; private set; }
+
+		/// <summary>
+		/// Opens the table and all of its index/blob files with read-only access, for readers such as
+		/// caches that must never write. Any write method throws <see cref="InvalidOperationException"/>.
+		/// </summary>
+		public static ParadoxTableFile OpenReadOnly(string filePath)
+		{
+			bool prev = ParadoxFileOpen.ReadOnlyScope;
+			ParadoxFileOpen.ReadOnlyScope = true;
+			try
+			{
+				var t = new ParadoxTableFile(filePath);
+				t.IsReadOnly = true;
+				return t;
+			}
+			finally { ParadoxFileOpen.ReadOnlyScope = prev; }
+		}
+
+		private void ThrowIfReadOnly()
+		{
+			if (IsReadOnly) throw new InvalidOperationException($"'{filePath}' was opened read-only.");
+		}
+
+		private void EnsureWriteLockHeld()
+		{
+			if (!fileLock.IsHeld)
+				throw new InvalidOperationException($"Write to '{filePath}' attempted without holding the table write lock.");
+		}
         private void ReloadIndexes()
         {
             indexManager?.Dispose();
@@ -786,12 +818,19 @@ namespace ParadoxReader
             BlobFile = null;
             secondaryIndexHandles = null;
 
-            indexManager = new IndexManager(filePath, FieldTypes, primaryKeyFields, autoIncVal, null);
-            DiscoverAssociatedFiles(filePath);
+            bool prevScope = ParadoxFileOpen.ReadOnlyScope;
+            ParadoxFileOpen.ReadOnlyScope = IsReadOnly;
+            try
+            {
+                indexManager = new IndexManager(filePath, FieldTypes, primaryKeyFields, autoIncVal, null);
+                DiscoverAssociatedFiles(filePath);
+            }
+            finally { ParadoxFileOpen.ReadOnlyScope = prevScope; }
         }
 
         private void WriteAutoIncValToHeader()
         {
+            EnsureWriteLockHeld();
             stream.Position = ParadoxHeaderOffsets.AutoIncVal;
             using (var w = new BinaryWriter(new NonClosingStreamWrapper(stream), Encoding.Default))
                 w.Write(autoIncVal);
@@ -806,6 +845,7 @@ namespace ParadoxReader
         /// </summary>
         public void UpdateRecord(ParadoxReader.ParadoxRecord existing, object[] newFieldValues)
         {
+            ThrowIfReadOnly();
             using (fileLock.AcquireScopedWriteLock())
             {
                 RefreshHeaderState();
@@ -834,6 +874,7 @@ namespace ParadoxReader
         /// </summary>
         public void DeleteRecord(ParadoxReader.ParadoxRecord record)
         {
+            ThrowIfReadOnly();
             using (fileLock.AcquireScopedWriteLock())
             {
                 RefreshHeaderState();
@@ -879,6 +920,7 @@ namespace ParadoxReader
         /// </summary>
         private void NotifyBlockChanged(DbBlock block)
         {
+            EnsureWriteLockHeld();
             object[] firstRowValues = block.RecordCount > 0
                 ? ParadoxRecord.DeserializeRecordBytes(block.GetRecordBytes(0), this)
                 : null;
@@ -963,6 +1005,7 @@ namespace ParadoxReader
         /// <summary>RecordCount is at offset 0x06 (int32), after RecordSize(2)+headerSize(2)+FileType(1)+maxTableSize(1).</summary>
         private void WriteRecordCountToHeader()
         {
+            EnsureWriteLockHeld();
             stream.Position = ParadoxHeaderOffsets.RecordCount;
             using (var w = new BinaryWriter(new NonClosingStreamWrapper(stream), Encoding.Default))
                 w.Write(RecordCount);
@@ -979,6 +1022,7 @@ namespace ParadoxReader
         /// </summary>
         private short IncrementTableVersion()
         {
+            EnsureWriteLockHeld();
             short newValue = (short)((V4Header?.changeCount4 ?? tableVersion) + 1);
             tableVersion = newValue;
             if (V4Header != null) V4Header.changeCount4 = newValue;
@@ -998,6 +1042,7 @@ namespace ParadoxReader
         /// </summary>
         private void WriteBlockHeadersToFileHeader()
         {
+            EnsureWriteLockHeld();
             stream.Position = ParadoxHeaderOffsets.BlockChain;
             using (var w = new BinaryWriter(new NonClosingStreamWrapper(stream), Encoding.Default))
             {
@@ -1027,6 +1072,7 @@ namespace ParadoxReader
         /// </summary>
         private void IncrementChangeCount()
         {
+            EnsureWriteLockHeld();
             changeCount1++;
             if (changeCount1 == 0)
             {
