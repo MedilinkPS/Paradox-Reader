@@ -405,6 +405,35 @@ namespace ParadoxReader
             ThrowIfReadOnly();
             using (fileLock.AcquireScopedWriteLock())
             {
+                int recordCountBefore = RecordCount;
+                try
+                {
+                    return AppendRecordLocked(fieldValues);
+                }
+                catch (Exception ex)
+                {
+                    ReportWriteException("AppendRecord", ex, recordCountBefore);
+                    throw;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Reports an exception thrown part-way through a write. Such a write may already have added the
+        /// row to the .DB without updating the indexes, and post-write verification never runs for it.
+        /// </summary>
+        private void ReportWriteException(string operation, Exception ex, int recordCountBefore)
+        {
+            if (!VerifyWrites) return;
+            string msg = $"ParadoxReader {operation} on '{filePath}' threw {ex.GetType().Name}: {ex.Message} " +
+                         $"(RecordCount before={recordCountBefore}, after={RecordCount}, AutoInc={autoIncVal}) {ex.StackTrace}";
+            System.Diagnostics.Trace.TraceError(msg);
+            try { WriteVerificationFailed?.Invoke(filePath, operation, msg); } catch { /* never let a handler mask the original exception */ }
+        }
+
+        private ParadoxReader.ParadoxRecord AppendRecordLocked(object[] fieldValues)
+        {
+            {
                 RefreshHeaderState();
                 var headersBefore = CaptureFileHeaders();
                 CheckUniqueIndexes(fieldValues);
