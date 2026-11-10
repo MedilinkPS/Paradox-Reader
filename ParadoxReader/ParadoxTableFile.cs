@@ -431,11 +431,54 @@ namespace ParadoxReader
             try { WriteVerificationFailed?.Invoke(filePath, operation, msg); } catch { /* never let a handler mask the original exception */ }
         }
 
+        /// <summary>
+        /// Appends many records under a single write lock. The header state is refreshed once and
+        /// <see cref="VerifyWrites"/> runs once at the end instead of after every row, which is much
+        /// faster than calling <see cref="AppendRecord(object[])"/> in a loop or reopening the table per row.
+        /// Rows are written in order; if one throws, earlier rows remain written and the exception is rethrown.
+        /// </summary>
+        /// <param name="rows">Field values for each record, in field order. AutoInc values are assigned automatically.</param>
+        /// <returns>The appended records, in input order.</returns>
+        public IList<ParadoxReader.ParadoxRecord> AppendRecords(IEnumerable<object[]> rows)
+        {
+            if (rows == null) throw new ArgumentNullException(nameof(rows));
+            ThrowIfReadOnly();
+            var result = new List<ParadoxReader.ParadoxRecord>();
+            using (fileLock.AcquireScopedWriteLock())
+            {
+                int recordCountBefore = RecordCount;
+                Dictionary<string, byte[]> headersBefore = null;
+                try
+                {
+                    RefreshHeaderState();
+                    headersBefore = CaptureFileHeaders();
+                    foreach (var fieldValues in rows)
+                        result.Add(AppendRecordCore(fieldValues));
+                }
+                catch (Exception ex)
+                {
+                    ReportWriteException($"AppendRecords (row {result.Count + 1})", ex, recordCountBefore);
+                    throw;
+                }
+                if (result.Count > 0) VerifyFileHeadersChanged(headersBefore, $"AppendRecords ({result.Count} rows)");
+            }
+            return result;
+        }
+
         private ParadoxReader.ParadoxRecord AppendRecordLocked(object[] fieldValues)
         {
+            RefreshHeaderState();
+            var headersBefore = CaptureFileHeaders();
+            var record = AppendRecordCore(fieldValues);
+            VerifyFileHeadersChanged(headersBefore, "AppendRecord");
+            return record;
+        }
+
+        /// <summary>Appends one row. Caller holds the write lock and has refreshed header state.</summary>
+        private ParadoxReader.ParadoxRecord AppendRecordCore(object[] fieldValues)
+        {
+            if (fieldValues == null) throw new ArgumentNullException(nameof(fieldValues));
             {
-                RefreshHeaderState();
-                var headersBefore = CaptureFileHeaders();
                 CheckUniqueIndexes(fieldValues);
 
                 // Paradox manages
@@ -446,9 +489,7 @@ namespace ParadoxReader
 
                 if (RequiresSortedInsert())
                 {
-                    var sorted = AppendSorted(fieldValues, recordBytes);
-                    VerifyFileHeadersChanged(headersBefore, "AppendRecord");
-                    return sorted;
+                    return AppendSorted(fieldValues, recordBytes);
                 }
 
                 DbBlock  block       = FindOrAllocateBlockForInsert();
@@ -465,7 +506,6 @@ namespace ParadoxReader
                 indexManager.OnRowAppended(fieldValues, block.BlockNumber);
                 indexManager.SyncRecordCount(RecordCount);
                 IncrementChangeCount();
-                VerifyFileHeadersChanged(headersBefore, "AppendRecord");
 
                 return new ParadoxRecord(block.BlockNumber, recIdx, fieldValues);
             }

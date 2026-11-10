@@ -690,31 +690,36 @@ namespace ParadoxReader
 
         private FlatBlock ReadFlat(ushort number)
         {
+            // One read per block: the stream is unbuffered, so per-entry reads cost one OS call each.
             var b = new FlatBlock { Number = number };
+            var buf = new byte[FlatBlockSize];
             indexFile.stream.Position = indexFile.headerSize + (long)(number - 1) * FlatBlockSize;
-            using (var r = new BinaryReader(new NonClosingStreamWrapper(indexFile.stream), Encoding.Default))
+            int read = 0, n;
+            while (read < buf.Length && (n = indexFile.stream.Read(buf, read, buf.Length - read)) > 0) read += n;
+            b.Next = BitConverter.ToUInt16(buf, 0);
+            b.Prev = BitConverter.ToUInt16(buf, 2);
+            short used = BitConverter.ToInt16(buf, 4);
+            int count = used < 0 ? 0 : Math.Min(used / entrySize + 1, (FlatBlockSize - HEADER_SIZE) / entrySize);
+            count = Math.Min(count, Math.Max(0, (read - HEADER_SIZE) / entrySize));
+            for (int i = 0; i < count; i++)
             {
-                b.Next = r.ReadUInt16();
-                b.Prev = r.ReadUInt16();
-                short used = r.ReadInt16();
-                int count = used < 0 ? 0 : Math.Min(used / entrySize + 1, (FlatBlockSize - HEADER_SIZE) / entrySize);
-                for (int i = 0; i < count; i++) b.Rows.Add(r.ReadBytes(entrySize));
+                var row = new byte[entrySize];
+                Buffer.BlockCopy(buf, HEADER_SIZE + i * entrySize, row, 0, entrySize);
+                b.Rows.Add(row);
             }
             return b;
         }
 
         private void WriteFlat(FlatBlock b)
         {
+            var buf = new byte[FlatBlockSize];
+            BitConverter.GetBytes(b.Next).CopyTo(buf, 0);
+            BitConverter.GetBytes(b.Prev).CopyTo(buf, 2);
+            BitConverter.GetBytes((short)((b.Rows.Count - 1) * entrySize)).CopyTo(buf, 4);
+            int off = HEADER_SIZE;
+            foreach (var row in b.Rows) { Buffer.BlockCopy(row, 0, buf, off, row.Length); off += row.Length; }
             indexFile.stream.Position = indexFile.headerSize + (long)(b.Number - 1) * FlatBlockSize;
-            using (var w = new BinaryWriter(new NonClosingStreamWrapper(indexFile.stream), Encoding.Default))
-            {
-                w.Write(b.Next);
-                w.Write(b.Prev);
-                w.Write((short)((b.Rows.Count - 1) * entrySize));
-                foreach (var row in b.Rows) w.Write(row);
-                int rem = FlatBlockSize - HEADER_SIZE - b.Rows.Count * entrySize;
-                if (rem > 0) w.Write(new byte[rem]);
-            }
+            indexFile.stream.Write(buf, 0, buf.Length);
         }
 
         private IEnumerable<FlatBlock> FlatChain()
